@@ -1,0 +1,47 @@
+base_rx:
+  model_name: RX
+lrx_5_15:
+  model_name: LRX
+  window: [5, 15]
+  batch_size: 10
+lrx_11_31:
+  model_name: LRX
+  window: [11, 31]
+  batch_size: 10
+lrx_21_61:
+  model_name: LRX
+  window: [21, 61]
+  batch_size: 10
+lrx_31_91:
+  model_name: LRX
+  window: [31, 91]
+  batch_size: 10
+lrx_41_121:
+  model_name: LRX
+  window: [41, 121]
+  batch_size: 10
+crd_5_15:
+  model_name: CRD
+  window: [5, 15]
+  lamda: 1e-6
+  batch_size: 10
+crd_11_21:
+  model_name: CRD
+  window: [11, 21]
+  lamda: 1e-6
+  batch_size: 10
+crd_21_31:
+  model_name: CRD
+  window: [21, 31]
+  lamda: 1e-6
+  batch_size: 10
+crd_31_41:
+  model_name: CRD
+  window: [31, 41]
+  lamda: 1e-6
+  batch_size: 10
+crd_41_51:
+  model_name: CRD
+  window: [41, 51]
+  lamda: 1e-6
+  batch_size: 10

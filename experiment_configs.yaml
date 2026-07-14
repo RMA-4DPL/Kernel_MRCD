@@ -1,0 +1,9 @@
+loading: all
+parse_model: True
+AC_model: 
+  name: IARR
+Scaler:
+  name: Standard
+  scaling_scope: per_sample
+Subsample: null
+Vis_scale: 3
