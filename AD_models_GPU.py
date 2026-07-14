@@ -1,10 +1,33 @@
 import numpy as np
-from spectral import RX, rx
 import scipy as sp
 import time 
 import torch
 import torch.nn.functional as F
 import sys
+
+class RX():
+    def __init__(self, cov=None, device=None):
+        self.cov = cov
+    
+    def run_gpu(self, X):
+        # N_t = torch.from_numpy(N).float().to(device)
+        # x_t = torch.from_numpy(x).float().to(device)
+        N_t = torch.reshape(X, (-1, X.shape[-1])).contiguous()
+        x_t = torch.reshape(X, (-1, X.shape[-1])).contiguous()
+
+        # anomaly_score = torch.from_numpy(np.empty(n, dtype=np.float32)).type(torch.float32).contiguous().to(device)
+        with torch.no_grad():
+            mean_N = torch.mean(N_t, dim=1, dtype=torch.float32).to(self.device)
+            x_t = x_t - mean_N 
+            if self.cov is not None:
+                cov_t = torch.from_numpy(self.cov).float().to(self.device).contiguous()
+            else:
+                N_t = N_t - mean_N[:, None, :] # Overwrite N_t to save memory
+                cov_t = N_t.transpose(1, 2) @ N_t
+                cov_t /= float(N_t.shape[0] - 1)
+            solved = torch.linalg.solve(cov_t, x_t.unsqueeze(-1)).squeeze(-1)
+        return torch.sqrt(torch.sum(x_t * solved, dim=1))
+
 
 class LRX():
     def __init__(self, window=(5, 15), cov=None, device=None):
@@ -12,9 +35,6 @@ class LRX():
         self.cov = cov
         self.batch_size = 100
         self.device = device
-
-    def LRX(self, X):
-        return rx(X, window=self.window, cov=self.cov)
 
     def __call__(self, X):
         """
