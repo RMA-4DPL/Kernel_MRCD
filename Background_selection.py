@@ -95,6 +95,8 @@ class MCD():
     
     def __call__(self, X):
         from sklearn.covariance import MinCovDet
+        if X.ndim > 2:
+           X = X.reshape((-1, X.shape[-1]))
         model = MinCovDet(support_fraction = self.support_fraction, random_state = np.random.RandomState(4)).fit(X)
 
         return model.location_, model.covariance_
