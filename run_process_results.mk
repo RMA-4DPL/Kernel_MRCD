@@ -23,6 +23,10 @@ process:
 			for scope in $(SCALING_SCOPES); do \
 				echo "=== dataset=$$dataset scaler=$$scaler scaling_scope=$$scope ==="; \
 				$(PYTHON) Process_results.py --dataset=$$dataset --scaler=$$scaler --scaling_scope=$$scope $(RECALCULATE); \
+				$(PYTHON) Visualize_classical_results.py --dataset=$$dataste --scaler=$$scaler --scaling_scope==$$scope
 			done; \
 		done; \
 	done
+
+	$(PYTHON) Combine_multi_dataset_results.py --scaler=none
+	$(PYTHON) Combine_multi_dataset_results.py --scaler=Standard
