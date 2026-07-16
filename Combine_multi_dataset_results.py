@@ -15,7 +15,7 @@ argument_parser = argparse.ArgumentParser(
     description='Combine the classical (RX/AMF/ACE) model results and visualizations across multiple '
                 'datasets for one fixed scaler/scaling_scope setting (see Process_results.py and '
                 'Visualize_classical_results.py, which must have already been run for each dataset).')
-argument_parser.add_argument('--datasets', type=str, nargs='+', default=['Salinas'], help='Datasets to combine (default: Salinas)')
+argument_parser.add_argument('--datasets', type=str, nargs='+', default=None, help='Datasets to combine (default: auto-discover every dataset under the Results directory that has a summary for the given scaler/scaling_scope)')
 argument_parser.add_argument('--scaler', type=str, default='Standard', help='Scaler name (must match Process_results.py)')
 argument_parser.add_argument('--scaling_scope', type=str, default='per_sample', choices=['global', 'per_sample'], help='Scaling scope for the Scaler (must match Process_results.py)')
 args = argument_parser.parse_args()
@@ -24,6 +24,31 @@ print('Loading yaml config')
 with open(os.path.join(base_filepath_configs, "result_processing_config.yaml"), "r") as f:
     experiment_settings_template = yaml.safe_load(f)
 metrics_to_calc = experiment_settings_template['metrics']
+
+
+def discover_datasets(scaler, scaling_scope):
+    # Each dataset is a subdirectory of Results/ (skip our own "Combined_*" output dirs) that
+    # has already been through Process_results.py for this scaler/scaling_scope, i.e. has a
+    # Results_summary.xlsx under Scaler_{scaler}_{scaling_scope}.
+    found = []
+    if not os.path.isdir(base_filepath_results):
+        return found
+    for entry in sorted(os.listdir(base_filepath_results)):
+        if entry.startswith("Combined_"):
+            continue
+        entry_path = os.path.join(base_filepath_results, entry)
+        summary_path = os.path.join(entry_path, f"Scaler_{scaler}_{scaling_scope}", 'Results_summary.xlsx')
+        if os.path.isdir(entry_path) and os.path.exists(summary_path):
+            found.append(entry)
+    return found
+
+
+if args.datasets is None:
+    args.datasets = discover_datasets(args.scaler, args.scaling_scope)
+    print(f"Auto-discovered datasets: {args.datasets}")
+    if not args.datasets:
+        raise SystemExit(f"No datasets found under {base_filepath_results} with a Results_summary.xlsx for "
+                          f"Scaler_{args.scaler}_{args.scaling_scope}. Run Process_results.py first.")
 
 combined_save_dir = os.path.join(base_filepath_results, "Combined_" + "_".join(args.datasets), f"Scaler_{args.scaler}_{args.scaling_scope}")
 os.makedirs(combined_save_dir, exist_ok=True)
