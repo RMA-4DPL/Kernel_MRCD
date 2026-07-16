@@ -5,5 +5,5 @@
 !*.txt
 !*.yaml
 !.gitignore
+!KMRCD/
 !KMRCD/*.py
-
