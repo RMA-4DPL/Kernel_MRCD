@@ -38,7 +38,7 @@ if __name__ == "__main__":
     argument_parser.add_argument('--dataset', type=str, default='Salinas_A', help='Select which dataset to load (default:Salinas).')
     argument_parser.add_argument('--model', type=str, default='base_rx', required=False, help='Name of the model to process')   
     argument_parser.add_argument('--retrain', action='store_true', help='Retrain the model if specified')
-    argument_parser.set_defaults(retrain=True)
+    argument_parser.set_defaults(retrain=False)
     argument_parser.add_argument('--scaler', type=str, default='Standard', help='Scaler name (overrides experiment_settings Scaler)')
     argument_parser.add_argument('--scaling_scope', type=str, default='per_sample', choices=['global', 'per_sample'], help='Scaling scope for the Scaler (overrides experiment_settings Scaler scaling_scope)')
     argument_parser.add_argument('--background_model', type=str, default='MCD', help='Model to select background sample for statistics (default: Sample).')
