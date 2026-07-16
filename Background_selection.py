@@ -4,7 +4,6 @@ from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 from sklearn.covariance import LedoitWolf
 from statsmodels.robust.scale import qn_scale
-from MRCD import mrcd
 from helper_functions import calc_cov, qn_scale_overwrite
 from sklearn.utils.extmath import fast_logdet
 import scipy
