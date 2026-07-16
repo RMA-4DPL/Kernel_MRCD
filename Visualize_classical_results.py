@@ -6,65 +6,46 @@ import yaml
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from helper_functions import create_save_dir_name, load_mudcad_file, normalize_data
+from helper_functions import create_save_dir_name, load_dataset, normalize_data
 
 base_filepath_configs = pathlib.Path(__file__).parent.resolve()
-base_filepath = "/mnt/userdata/MaMe/SSDdata/DECAT/First test"
+base_filepath = "/mnt/userdata/MaMe/SSDdata/Kernel_MRCD"
+base_filepath_results = os.path.join(base_filepath, 'Results')
 
 argument_parser = argparse.ArgumentParser(
-    description='Visualize the classical (RX/LRX/CRD) model results produced by Process_results_DL.py for a single configuration')
-argument_parser.add_argument('--subsample', type=int, default=None, help='Subsample factor for spatial dimensions (overrides experiment_settings Subsample; must match Process_results_DL.py)')
-argument_parser.add_argument('--vis_scale', type=str, default=None, help="Scale factor for the visual RGB bands (overrides experiment_settings Vis_scale; pass 'none' to disable; must match Process_results_DL.py)")
-argument_parser.add_argument('--ac_model', type=str, default=None, help='Atmospheric correction model name (overrides experiment_settings AC_model; must match Process_results_DL.py)')
-argument_parser.add_argument('--test_split_method', type=str, default='random', choices=['random', 'seasonal'], help='Method used to split the test set (must match Process_results_DL.py)')
-argument_parser.add_argument('--test_season', type=str, default='autumn', help='Season used for the test set when test_split_method is seasonal (must match Process_results_DL.py)')
+    description='Visualize the classical (RX/AMF/ACE) model results produced by Process_results.py')
+argument_parser.add_argument('--dataset', type=str, default='Salinas', help='Select which dataset to load (default: Salinas; must match Process_results.py)')
+argument_parser.add_argument('--scaler', type=str, default='Standard', help='Scaler name (overrides experiment_settings Scaler; must match Process_results.py)')
+argument_parser.add_argument('--scaling_scope', type=str, default='per_sample', choices=['global', 'per_sample'], help='Scaling scope for the Scaler (overrides experiment_settings Scaler scaling_scope; must match Process_results.py)')
 args = argument_parser.parse_args()
 
 print('Loading yaml config')
-with open(os.path.join(base_filepath_configs, "model_configs.yaml"), "r") as f:
-    model_configs = yaml.safe_load(f)
 with open(os.path.join(base_filepath_configs, "result_processing_config.yaml"), "r") as f:
     experiment_settings = yaml.safe_load(f)
 metrics_to_calc = experiment_settings['metrics']
-# Mirror Process_results_DL.py so the reconstructed save_dir matches where it wrote its output.
-experiment_settings['test_split_method'] = args.test_split_method
-experiment_settings['test_season'] = args.test_season
-experiment_settings.setdefault('loss_function', 'weighted_mse')
-if args.subsample is not None:
-    experiment_settings['Subsample'] = args.subsample
-if args.ac_model is not None:
-    experiment_settings['AC_model'] = {'name': args.ac_model}
-if args.vis_scale is not None:
-    experiment_settings['Vis_scale'] = None if args.vis_scale.lower() in ('none', 'null') else float(args.vis_scale)
+# Mirror Process_results.py so the reconstructed save_dir matches where it wrote its output.
+for arg in vars(args):
+    experiment_settings[arg] = getattr(args, arg)
+if args.scaler is not None:
+    experiment_settings.setdefault('Scaler', {})['name'] = args.scaler
+    if args.scaling_scope is not None:
+        experiment_settings.setdefault('Scaler', {})['scaling_scope'] = args.scaling_scope
 
-# Process_results_DL.py writes its summary/detailed files to the save_dir of whichever model is
-# last in {**dl_model_configs, **classical_model_configs}; since that merge always puts the
-# classical models last, the last model here (loaded from model_configs.yaml alone) lands on
-# the same save_dir without needing DL_model_configs.yaml at all.
-last_model = list(model_configs.keys())[-1]
-summary_save_dir = create_save_dir_name(base_filepath, last_model, experiment_settings)
-summary_save_dir = summary_save_dir.split(last_model)[0]
+# Process_results.py discovers models from the results directory itself (one subdirectory per
+# "{model_name}_{background_model}" combination, see LXR_test.py) rather than from
+# model_configs.yaml, so the save_dir here doesn't depend on any model name either.
+summary_save_dir = create_save_dir_name(base_filepath_results, None, experiment_settings)
 
-# Restrict to the models listed in result_processing_config.yaml, if any are given (applied
-# after the save_dir above so it doesn't move depending on which subset is visualized).
-models_to_evaluate = experiment_settings.get('models')
-if models_to_evaluate:
-    model_configs = {k: v for k, v in model_configs.items() if k in models_to_evaluate}
-
-summary_path = os.path.join(summary_save_dir, 'DL_Results_summary.xlsx')
-detailed_path = os.path.join(summary_save_dir, 'DL_Results_detailed.xlsx')
+summary_path = os.path.join(summary_save_dir, 'Results_summary.xlsx')
+detailed_path = os.path.join(summary_save_dir, 'Results_detailed.xlsx')
 
 if not os.path.exists(summary_path):
-    raise SystemExit(f"No summary found at {summary_path}. Run Process_results_DL.py first.")
+    raise SystemExit(f"No summary found at {summary_path}. Run Process_results.py first.")
 
 metrics_df = pd.read_excel(summary_path, sheet_name='Metrics', index_col=0)
 perc_summary_df = pd.read_excel(summary_path, sheet_name='Percentage correct', index_col=0)
 detailed_xls = pd.ExcelFile(detailed_path) if os.path.exists(detailed_path) else None
-models = [model for model in model_configs if model in metrics_df.index]
-
-for model in model_configs:
-    if model not in models:
-        print(f"Skipping {model}: no results found in {os.path.basename(summary_path)}.")
+models = list(metrics_df.index)
 
 
 def parse_mean_std(series):
@@ -85,7 +66,7 @@ for i, m in enumerate(metrics_to_calc):
     ax.set_title(m)
     ax.set_ylabel(m)
     ax.tick_params(axis='x', rotation=45)
-fig.suptitle("Classical model (RX/LRX/CRD) metric comparison")
+fig.suptitle("Classical model (RX/AMF/ACE) metric comparison")
 fig.tight_layout()
 fig.savefig(os.path.join(summary_save_dir, "Classical_metrics_comparison.png"))
 plt.close(fig)
@@ -124,98 +105,88 @@ if detailed_xls is not None:
     fig.savefig(os.path.join(summary_save_dir, "Classical_metric_distributions.png"))
     plt.close(fig)
 
-# --- RX-family (RX/LRX/CRD) metric vs. window size ---
-# LRX/CRD are swept over window sizes in model_configs.yaml; RX has none and is drawn as a
-# flat reference line.
-rx_family = {}
-for model, config in model_configs.items():
-    if model not in models:
-        continue
-    window = config.get('window')
-    outer_window = window[1] if window else None
-    rx_family.setdefault(config['model_name'], []).append((model, outer_window))
+# --- Scene visualization: BGR composite, labels, and every model's output score map ---
+# Salinas is a single scene (see LXR_test.py/load_salinas), so there is one visual composite
+# per run rather than a random gallery of samples.
+print("Building scene visualization")
+raw_data, data_array, label_array, label_ids = load_dataset(base_path=base_filepath, dataset_name=args.dataset)
 
-if rx_family:
-    fig, axes = plt.subplots(1, len(metrics_to_calc), figsize=(5 * len(metrics_to_calc), 5), squeeze=False)
-    for i, m in enumerate(metrics_to_calc):
-        ax = axes[0, i]
-        means, stds = parse_mean_std(metrics_df[m])
-        model_to_value = dict(zip(metrics_df.index, means))
-        model_to_std = dict(zip(metrics_df.index, stds))
-        for model_name, entries in rx_family.items():
-            windowed = sorted((w, mdl) for mdl, w in entries if w is not None)
-            if windowed:
-                x_vals = [w for w, _ in windowed]
-                y_vals = [model_to_value[mdl] for _, mdl in windowed]
-                yerr = [model_to_std[mdl] for _, mdl in windowed]
-                ax.errorbar(x_vals, y_vals, yerr=yerr, marker='o', capsize=3, label=model_name)
-            for mdl, w in entries:
-                if w is None:
-                    ax.axhline(model_to_value[mdl], linestyle='--', alpha=0.6, label=f"{mdl} (no window)")
-        ax.set_title(m)
-        ax.set_xlabel("Outer window size")
-        ax.set_ylabel(m)
-        ax.legend(fontsize=7)
-    fig.suptitle("RX-family (RX/LRX/CRD) metric vs. window size")
-    fig.tight_layout()
-    fig.savefig(os.path.join(summary_save_dir, "Classical_rx_window_comparison.png"))
-    plt.close(fig)
-else:
-    print("No RX-family (RX/LRX/CRD) results found; skipping window comparison plot.")
+n_bands = raw_data.shape[-1]
+wavelengths = np.linspace(400, 2500, n_bands)
+bgr_targets = [495, 555, 760]  # approximate blue/green/red wavelengths (nm)
+b_idx, g_idx, r_idx = [np.argmin(np.abs(wavelengths - t)) for t in bgr_targets]
+visual = np.stack([
+    normalize_data(raw_data[0, :, :, r_idx]),
+    normalize_data(raw_data[0, :, :, g_idx]),
+    normalize_data(raw_data[0, :, :, b_idx]),
+], axis=-1)
 
-# --- Random sample gallery: visual bands, labels, and every classical model's output score map ---
-# Classical models score the whole dataset (no train/test split of their own), so samples are
-# drawn from the full dataset rather than a held-out test split.
-print("Building random sample gallery")
-list_of_dirs = []
-for root, dirs, files in os.walk(os.path.join(base_filepath, "MUCAD", "dataset"), topdown=False):
-    if not dirs:
-        list_of_dirs.append(root)
-
-label_array = None
 model_scores = {}
 for model in models:
-    save_dir = create_save_dir_name(base_filepath, model, experiment_settings)
-    pickle_path = os.path.join(save_dir, "Raw_results.pickle")
+    pickle_path = os.path.join(summary_save_dir, model, "Raw_results.pickle")
     if not os.path.exists(pickle_path):
-        print(f"Skipping {model} in sample gallery: {pickle_path} not found.")
+        print(f"Skipping {model} in scene visualization: {pickle_path} not found.")
         continue
     with open(pickle_path, "rb") as f:
         x = pickle.load(f)
-    if label_array is None:
-        label_array = x["Labels"]
-    model_scores[model] = x["Scores"]
+    model_scores[model] = normalize_data(x["Scores"][0])
     del x
 
 if not model_scores:
-    print("No classical model results found; skipping random sample gallery.")
+    print("No classical model results found; skipping scene visualization.")
 else:
-    n_gallery = min(5, len(label_array))
-    rng = np.random.default_rng(4)
-    sample_indices = rng.choice(len(label_array), size=n_gallery, replace=False)
-
     models_with_scores = [model for model in models if model in model_scores]
     ncols = 2 + len(models_with_scores)
-    fig, axes = plt.subplots(n_gallery, ncols, figsize=(4 * ncols, 4 * n_gallery), squeeze=False)
-    for row, global_idx in enumerate(sample_indices):
-        _, visual_data, _ = load_mudcad_file(list_of_dirs[global_idx], load_vis=True)
-        axes[row, 0].imshow(normalize_data(visual_data))
-        axes[row, 0].set_title(f"Sample {global_idx} - Visual")
-        axes[row, 0].axis('off')
+    fig, axes = plt.subplots(1, ncols, figsize=(4 * ncols, 4), squeeze=False)
+    axes = axes[0]
 
-        temp_labels = np.sum(label_array[global_idx].astype(np.int16), axis=-1)
-        axes[row, 1].imshow(temp_labels)
-        axes[row, 1].set_title("Labels")
-        axes[row, 1].axis('off')
+    axes[0].imshow(visual)
+    axes[0].set_title("Visual (BGR composite)")
+    axes[0].axis('off')
 
-        for col, model in enumerate(models_with_scores, start=2):
-            ax = axes[row, col]
-            ax.imshow(model_scores[model][global_idx])
-            ax.set_title(model, fontsize=8)
-            ax.axis('off')
-    fig.suptitle("Random samples: visual bands, labels, and classical model outputs")
+    axes[1].imshow(label_array[0], cmap='nipy_spectral')
+    axes[1].set_title("Labels")
+    axes[1].axis('off')
+
+    for col, model in enumerate(models_with_scores, start=2):
+        axes[col].imshow(model_scores[model])
+        axes[col].set_title(model, fontsize=8)
+        axes[col].axis('off')
+    fig.suptitle(f"{experiment_settings['dataset']}: visual composite, labels, and classical model outputs")
     fig.tight_layout()
-    fig.savefig(os.path.join(summary_save_dir, "Classical_sample_gallery.png"))
+    fig.savefig(os.path.join(summary_save_dir, "Classical_scene_visualization.png"))
+    plt.close(fig)
+
+    # --- Score histograms: background vs foreground, and per-class, for each model ---
+    print("Building score histograms")
+    label_map = label_array[0]
+    background_mask = label_map == 0
+    foreground_mask = ~background_mask
+    category_ids = sorted(cid for cid in label_ids if cid != 0)
+
+    fig, axes = plt.subplots(len(models_with_scores), 2, figsize=(12, 4 * len(models_with_scores)), squeeze=False)
+    for row, model in enumerate(models_with_scores):
+        scores = model_scores[model]
+
+        ax_bg_fg = axes[row, 0]
+        ax_bg_fg.hist(scores[background_mask], bins=50, alpha=0.5, density=True, label='Background')
+        ax_bg_fg.hist(scores[foreground_mask], bins=50, alpha=0.5, density=True, label='Foreground')
+        ax_bg_fg.set_title(f"{model}: background vs foreground")
+        ax_bg_fg.set_xlabel("Score")
+        ax_bg_fg.set_ylabel("Density")
+        ax_bg_fg.legend(fontsize=8)
+
+        ax_classes = axes[row, 1]
+        for cat_id in category_ids:
+            class_mask = label_map == cat_id
+            if np.any(class_mask):
+                ax_classes.hist(scores[class_mask], bins=50, alpha=0.4, density=True, label=label_ids[cat_id][0])
+        ax_classes.set_title(f"{model}: per-class score distribution")
+        ax_classes.set_xlabel("Score")
+        ax_classes.set_ylabel("Density")
+        ax_classes.legend(bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=7)
+    fig.tight_layout()
+    fig.savefig(os.path.join(summary_save_dir, "Classical_score_histograms.png"))
     plt.close(fig)
 
 print(f"Saved visualizations to {summary_save_dir}")

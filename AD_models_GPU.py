@@ -1,33 +1,471 @@
 import numpy as np
 import scipy as sp
-import time 
+from scipy.spatial.distance import cdist, pdist
+from scipy.linalg import cho_factor, cho_solve
+import time
 import torch
 import torch.nn.functional as F
 import sys
+from kernels import RbfKernel
 
 class RX():
-    def __init__(self, cov=None, device=None):
+    def __init__(self, cov=None, mean_N=None, device=None, kernel=False, gamma=None, reg=1e-6):
         self.cov = cov
-    
-    def run_gpu(self, X):
-        # N_t = torch.from_numpy(N).float().to(device)
-        # x_t = torch.from_numpy(x).float().to(device)
-        N_t = torch.reshape(X, (-1, X.shape[-1])).contiguous()
-        x_t = torch.reshape(X, (-1, X.shape[-1])).contiguous()
+        self.mean_N = mean_N
+        self.device = device
+        self.kernel = kernel
+        self.gamma = gamma
+        self.reg = reg
+        self.gpu = False
+        
+    def __call__(self, X, N):
+        if self.kernel:
+            return self.run_kernel(X, N)
+        elif self.gpu:
+            return self.run_gpu(X, N)
+        else:
+            return self.run_cpu(X, N)
+
+    # def fit_kernel(self, N):
+    #     """
+    #     Fit the kernel background statistics (RBF Gram matrix of the
+    #     background samples, centered in feature space) used by run_kernel.
+    #     Cached so it is only recomputed when the background changes.
+    #     """
+    #     B = N.shape[-1]
+    #     N = np.ascontiguousarray(N.reshape(-1, B), dtype=np.float32)
+    #     self.gamma = self.gamma if self.gamma is not None else self._median_gamma(N)
+
+
+    def run_kernel(self, X, N):
+        """
+        Kernel RX (KRX) anomaly detector.
+
+        Background samples and test pixels are implicitly mapped into an
+        RKHS via an RBF kernel, and the linear RX (Mahalanobis distance)
+        statistic is evaluated there using only kernel evaluations, following
+        Kwon & Nasrabadi, "Kernel RX-Algorithm: A Nonlinear Anomaly Detector
+        for Hyperspectral Imagery" (2005):
+
+            delta(x) = k_x^T (K_c + reg*I)^-1 k_x
+
+        where K_c is the (n_bg, n_bg) centered Gram matrix of the background
+        samples and k_x is the centered vector of kernel evaluations between
+        x and every background sample.
+        """
+        H, W, B = X.shape
+        x_t = np.ascontiguousarray(X.reshape(-1, B), dtype=np.float32)
+        N_t = np.ascontiguousarray(N.reshape(-1, B), dtype=np.float32)
+        if self.mean_N is None:
+            self.mean_N = np.mean(N_t, axis=0)
+        x_t = x_t - self.mean_N
+
+        if type(self.kernel) is RbfKernel:
+            self._median_gamma(N_t)
+            self.kernel.sigma2 = self.gamma
+
+        K_tilde = self.kernel(x_t, x_t)
+        if self.cov is None:
+            self.cov = (1 - self.reg) * K_tilde + (x_t.shape[0] - 1) * self.reg * np.eye(x_t.shape[0]) # (8) in the paper
+        K_reg_inv = np.linalg.inv(self.cov)
+        kt_diag = np.diag(K_tilde)
+        scores = kt_diag - (1 - self.reg) * np.einsum("ij,jk,ik->i", K_tilde, K_reg_inv, K_tilde) # (9) in the paper
+        scores = scores/self.reg
+
+        return scores.reshape(H, W)
+
+    def _median_gamma(self, N_bg):
+        # Median heuristic (matches kernels.py's AutoRbfKernel): bandwidth is
+        # the reciprocal of the median squared pairwise distance among
+        # background samples.
+        sqdist = pdist(N_bg, metric='sqeuclidean')
+        med = max(np.median(sqdist), 1e-12)
+        self.gamma = med
+
+    def set_gamma(self, gamma=None):
+        self.gamma = gamma
+        self._kernel_bg = None
+
+    def get_gamma(self):
+        return self.gamma
+
+    def set_reg(self, reg=1e-6):
+        self.reg = reg
+        self._kernel_bg = None
+
+    def get_reg(self):
+        return self.reg
+
+    def load_config(self, config_dict):
+        if config_dict.get('kernel') is not None:
+            self.set_kernel(config_dict['kernel'])
+        if config_dict.get('gamma') is not None:
+            self.set_gamma(config_dict['gamma'])
+        if config_dict.get('reg') is not None:
+            self.set_reg(config_dict['reg'])
+        if config_dict.get('batch_size') is not None:
+            self.batch_size = config_dict['batch_size']
+
+
+    def run_gpu(self, X, N):
+        H, W, B = X.shape
+        x_t = torch.from_numpy(X).float().to(self.device)
+        x_t = torch.reshape(x_t, (-1, B)).contiguous()
 
         # anomaly_score = torch.from_numpy(np.empty(n, dtype=np.float32)).type(torch.float32).contiguous().to(device)
         with torch.no_grad():
-            mean_N = torch.mean(N_t, dim=1, dtype=torch.float32).to(self.device)
-            x_t = x_t - mean_N 
             if self.cov is not None:
                 cov_t = torch.from_numpy(self.cov).float().to(self.device).contiguous()
+                mean_N = torch.from_numpy(self.mean_N).float().to(self.device).contiguous()
             else:
-                N_t = N_t - mean_N[:, None, :] # Overwrite N_t to save memory
-                cov_t = N_t.transpose(1, 2) @ N_t
+                N_t = torch.from_numpy(N).float().to(self.device)
+                N_t = torch.reshape(N_t, (-1, B)).contiguous()
+                mean_N = torch.mean(N_t, dim=0, dtype=torch.float32).to(self.device)
+                N_t = N_t - mean_N[ None, :] # Overwrite N_t to save memory
+                cov_t = N_t.transpose(0, 1) @ N_t
                 cov_t /= float(N_t.shape[0] - 1)
+            x_t = x_t - mean_N 
             solved = torch.linalg.solve(cov_t, x_t.unsqueeze(-1)).squeeze(-1)
-        return torch.sqrt(torch.sum(x_t * solved, dim=1))
+            return torch.reshape(torch.sum(x_t * solved, dim=1), (H, W)).detach().cpu().numpy()
+        # return torch.reshape(torch.sqrt(torch.sum(x_t * solved, dim=1)), (H, W, -1)).detach().cpu().numpy()
 
+    def run_cpu(self, X, N):
+        H, W, B = X.shape
+        x_t = np.ascontiguousarray(X.reshape(-1, B), dtype=np.float32)
+
+        if self.cov is not None:
+            cov = self.cov
+            mean_N = self.mean_N
+        else:
+            N_t = np.ascontiguousarray(N.reshape(-1, B), dtype=np.float32)
+            mean_N = np.mean(N_t, axis=0)
+            N_t = N_t - mean_N
+            cov = (N_t.T @ N_t) / (N_t.shape[0] - 1)
+
+        x_t = x_t - mean_N
+        c, low = cho_factor(cov, lower=True, check_finite=False)
+        solved = cho_solve((c, low), x_t.T, check_finite=False).T
+        return np.reshape(np.sum(x_t * solved, axis=1), (H, W))
+
+    def set_mean_N(self, mean_N=None):
+        self.mean_N = mean_N
+
+    def set_cov(self, cov=None):
+        self.cov = cov
+
+    def set_device(self, device=None):
+        self.device = device
+
+    def set_kernel(self, kernel=None):
+        self.kernel = kernel
+
+class AMF():
+    def __init__(self, cov=None, mean_N=None, device=None, kernel=False, gamma=None, reg=1e-6, batch_size=2000):
+        self.cov = cov
+        self.mean_N = mean_N
+        self.device = device
+        self.kernel = kernel
+        self.gamma = gamma
+        self.reg = reg
+        self.batch_size = batch_size
+        self.gpu = False
+
+    def __call__(self, X, N, T):
+        if self.kernel:
+            return self.run_kernel(X, N, T)
+        elif self.gpu:
+            return self.run_gpu(X, N, T)
+        else:
+            return self.run_cpu(X, N, T)
+
+    def run_kernel(self, X, N, T):
+        """
+        Kernel AMF (KAMF) anomaly detector.
+
+        Generalizes RX.run_kernel's shrinkage-regularized kernel trick (see
+        its docstring, eqs. 8-9) from the quadratic RX form to the bilinear
+        adaptive matched filter form via
+
+            g(a, b) = [K(a, b) - (1 - reg) * k_a^T S^-1 k_b] / reg
+
+        where S = (1-reg)*K_bg + reg*(n_bg-1)*I is the regularized
+        background Gram matrix (eq. 8, built from the background samples N
+        this time, since the target T is not itself a background point) and
+        k_a is the vector of kernel evaluations between a and every
+        background sample. AMF's score is then g(t, x)^2 / g(t, t) --
+        exactly the kernelized numerator/denominator of the linear AMF
+        statistic (t^T Sigma^-1 x)^2 / (t^T Sigma^-1 t).
+        """
+        H, W, B = X.shape
+        x_t = np.ascontiguousarray(X.reshape(-1, B), dtype=np.float32)
+        t_t = np.ascontiguousarray(T.reshape(-1, B), dtype=np.float32)
+        N_t = np.ascontiguousarray(N.reshape(-1, B), dtype=np.float32)
+        if self.mean_N is None:
+            self.mean_N = np.mean(N_t, axis=0)
+        x_t = x_t - self.mean_N
+        t_t = t_t - self.mean_N
+
+        if type(self.kernel) is RbfKernel:
+            self._median_gamma(x_t)
+            self.kernel.sigma2 = self.gamma
+
+        k_tilde = self.kernel(x_t)
+        if self.cov is None:
+            self.cov = (1 - self.reg) * k_tilde + (x_t.shape[0] - 1) * self.reg * np.eye(x_t.shape[0]) # (8) in the paper
+        K_reg_inv = np.linalg.inv(self.cov)
+                      
+
+        t_x = self.kernel(t_x, x_t)
+        g_tt = (self.kernel(t_t, t_t)[0, 0] - (1 - self.reg) * (t_x @ K_reg_inv @ t_x)[0, 0]) / self.reg
+
+        g_tx = (t_x - (1 - self.reg) * k_tilde @ K_reg_inv @ t_x) / self.reg
+
+        scores = g_tx ** 2 / g_tt
+        return scores.reshape(H, W)
+
+    def _median_gamma(self, N_bg):
+        sqdist = pdist(N_bg, metric='sqeuclidean')
+        med = max(np.median(sqdist), 1e-12)
+        self.gamma = med
+
+    def set_gamma(self, gamma=None):
+        self.gamma = gamma
+
+    def get_gamma(self):
+        return self.gamma
+
+    def set_reg(self, reg=1e-6):
+        self.reg = reg
+
+    def get_reg(self):
+        return self.reg
+
+    def set_kernel(self, kernel=None):
+        self.kernel = kernel
+
+    def load_config(self, config_dict):
+        if config_dict.get('kernel') is not None:
+            self.set_kernel(config_dict['kernel'])
+        if config_dict.get('gamma') is not None:
+            self.set_gamma(config_dict['gamma'])
+        if config_dict.get('reg') is not None:
+            self.set_reg(config_dict['reg'])
+        if config_dict.get('batch_size') is not None:
+            self.batch_size = config_dict['batch_size']
+
+    def run_gpu(self, X, N, T):
+        H, W, B = X.shape
+        x_t = torch.from_numpy(X).float().to(self.device)
+        t_t = torch.from_numpy(T).float().to(self.device)
+        x_t = torch.reshape(x_t, (-1, B)).contiguous()
+        t_t = torch.reshape(t_t, (-1, B)).contiguous()
+
+        # anomaly_score = torch.from_numpy(np.empty(n, dtype=np.float32)).type(torch.float32).contiguous().to(device)
+        with torch.no_grad():
+            if self.cov is not None:
+                cov_t = torch.from_numpy(self.cov).float().to(self.device).contiguous()
+                mean_N = torch.from_numpy(self.mean_N).float().to(self.device).contiguous()
+            else:
+                N_t = torch.from_numpy(N).float().to(self.device)
+                N_t = torch.reshape(N, (-1, B)).contiguous()
+                mean_N = torch.mean(N_t, dim=1, dtype=torch.float32).to(self.device)
+                N_t = N_t - mean_N[:, None, :] # Overwrite N_t to save memory
+                cov_t = N_t.transpose(0, 1) @ N_t
+                cov_t /= float(N_t.shape[0] - 1)
+            t_t = t_t - mean_N
+            x_t = x_t - mean_N
+            solved_x = torch.linalg.solve(cov_t, x_t.unsqueeze(-1)).squeeze(-1)
+            solved_t = torch.linalg.solve(cov_t, t_t.unsqueeze(-1)).squeeze(-1)
+            numerator = torch.sum(t_t * solved_x, dim=1) ** 2
+            denominator = torch.sum(t_t * solved_t, dim=1)
+            score = numerator / denominator
+        return torch.reshape(score, (H, W)).detach().cpu().numpy()
+
+    def run_cpu(self, X, N, T):
+        H, W, B = X.shape
+        x_t = np.ascontiguousarray(X.reshape(-1, B), dtype=np.float32)
+        t_t = np.ascontiguousarray(T.reshape(-1, B), dtype=np.float32)
+
+        if self.cov is not None:
+            cov = self.cov
+            mean_N = self.mean_N
+        else:
+            N_t = np.ascontiguousarray(N.reshape(-1, B), dtype=np.float32)
+            mean_N = np.mean(N_t, axis=0)
+            N_t = N_t - mean_N
+            cov = (N_t.T @ N_t) / (N_t.shape[0] - 1)
+
+        x_t = x_t - mean_N
+        t_t = t_t - mean_N
+        c, low = cho_factor(cov, lower=True, check_finite=False)
+        solved_x = cho_solve((c, low), x_t.T, check_finite=False).T
+        solved_t = cho_solve((c, low), t_t.T, check_finite=False).T
+        numerator = np.sum(t_t * solved_x, axis=1) ** 2
+        denominator = np.sum(t_t * solved_t, axis=1)
+        return np.reshape(numerator / denominator, (H, W))
+
+    def set_mean_N(self, mean_N=None):
+        self.mean_N = mean_N
+
+    def set_cov(self, cov=None):
+        self.cov = cov
+
+    def set_device(self, device=None):
+        self.device = device
+
+class ACE():
+    def __init__(self, cov=None, mean_N=None, device=None, kernel=False, gamma=None, reg=1e-6, batch_size=2000):
+        self.cov = cov
+        self.mean_N = mean_N
+        self.device = device
+        self.kernel = kernel
+        self.gamma = gamma
+        self.reg = reg
+        self.batch_size = batch_size
+        self.gpu = False
+
+    def __call__(self, X, N, T):
+        if self.kernel:
+            return self.run_kernel(X, N, T)
+        elif self.gpu:
+            return self.run_gpu(X, N, T)
+        else:
+            return self.run_cpu(X, N, T)
+
+    def run_kernel(self, X, N, T):
+        """
+        Kernel ACE (KACE) anomaly detector.
+
+        Same shrinkage-regularized kernel trick and bilinear form g(a, b) as
+        AMF.run_kernel, but normalized by both the target's and the test
+        pixel's own g(., .) term, mirroring the linear ACE statistic
+        (t^T Sigma^-1 x)^2 / [(t^T Sigma^-1 t)(x^T Sigma^-1 x)]:
+
+            score(x) = g(t, x)^2 / (g(t, t) * g(x, x))
+
+        Note g(x, x) is exactly RX.run_kernel's statistic for x against the
+        same background.
+        """
+        H, W, B = X.shape
+        x_t = np.ascontiguousarray(X.reshape(-1, B), dtype=np.float32)
+        t_t = np.ascontiguousarray(T.reshape(-1, B), dtype=np.float32)
+        N_t = np.ascontiguousarray(N.reshape(-1, B), dtype=np.float32)
+        if self.mean_N is None:
+            self.mean_N = np.mean(N_t, axis=0)
+        x_t = x_t - self.mean_N
+        t_t = t_t - self.mean_N
+
+        if type(self.kernel) is RbfKernel:
+            self._median_gamma(x_t)
+            self.kernel.sigma2 = self.gamma
+
+        k_tilde = self.kernel(x_t)
+        if self.cov is None:
+            self.cov = (1 - self.reg) * k_tilde + (x_t.shape[0] - 1) * self.reg * np.eye(x_t.shape[0]) # (8) in the paper
+        K_reg_inv = np.linalg.inv(self.cov)
+                      
+
+        t_x = self.kernel(t_x, x_t)
+        g_tt = (self.kernel(t_t, t_t)[0, 0] - (1 - self.reg) * (t_x @ K_reg_inv @ t_x)[0, 0]) / self.reg
+
+        g_tx = (t_x - (1 - self.reg) * k_tilde @ K_reg_inv @ t_x) / self.reg
+
+        kt_diag = np.diag(k_tilde)
+        g_xx = kt_diag - (1 - self.reg) * np.einsum("ij,jk,ik->i", k_tilde, K_reg_inv, k_tilde) # (9) in the paper
+        g_xx = scores/self.reg
+
+        scores = g_tx ** 2 / (g_tt * g_xx)
+        return scores.reshape(H, W)
+
+    def _median_gamma(self, N_bg):
+        sqdist = pdist(N_bg, metric='sqeuclidean')
+        med = max(np.median(sqdist), 1e-12)
+        self.gamma = med
+
+    def set_gamma(self, gamma=None):
+        self.gamma = gamma
+
+    def get_gamma(self):
+        return self.gamma
+
+    def set_reg(self, reg=1e-6):
+        self.reg = reg
+
+    def get_reg(self):
+        return self.reg
+
+    def set_kernel(self, kernel=None):
+        self.kernel = kernel
+
+    def load_config(self, config_dict):
+        if config_dict.get('kernel') is not None:
+            self.set_kernel(config_dict['kernel'])
+        if config_dict.get('gamma') is not None:
+            self.set_gamma(config_dict['gamma'])
+        if config_dict.get('reg') is not None:
+            self.set_reg(config_dict['reg'])
+        if config_dict.get('batch_size') is not None:
+            self.batch_size = config_dict['batch_size']
+
+    def run_gpu(self, X, N, T):
+        H, W, B = X.shape
+        x_t = torch.from_numpy(X).float().to(self.device)
+        t_t = torch.from_numpy(T).float().to(self.device)
+        x_t = torch.reshape(x_t, (-1, B)).contiguous()
+        t_t = torch.reshape(t_t, (-1, B)).contiguous()
+
+        # anomaly_score = torch.from_numpy(np.empty(n, dtype=np.float32)).type(torch.float32).contiguous().to(device)
+        with torch.no_grad():
+            if self.cov is not None:
+                cov_t = torch.from_numpy(self.cov).float().to(self.device).contiguous()
+                mean_N = torch.from_numpy(self.mean_N).float().to(self.device).contiguous()
+            else:
+                N_t = torch.from_numpy(N).float().to(self.device)
+                N_t = torch.reshape(N, (-1, B)).contiguous()
+                mean_N = torch.mean(N_t, dim=1, dtype=torch.float32).to(self.device)
+                N_t = N_t - mean_N[:, None, :] # Overwrite N_t to save memory
+                cov_t = N_t.transpose(0, 1) @ N_t
+                cov_t /= float(N_t.shape[0] - 1)
+            t_t = t_t - mean_N
+            x_t = x_t - mean_N
+            solved_x = torch.linalg.solve(cov_t, x_t.unsqueeze(-1)).squeeze(-1)
+            solved_t = torch.linalg.solve(cov_t, t_t.unsqueeze(-1)).squeeze(-1)
+            numerator = torch.sum(t_t * solved_x, dim=1) ** 2
+            denominator = torch.sum(t_t * solved_t, dim=1) * torch.sum(x_t * solved_x, dim=1)
+            score = numerator / denominator
+        return torch.reshape(score, (H, W)).detach().cpu().numpy()
+
+    def run_cpu(self, X, N, T):
+        H, W, B = X.shape
+        x_t = np.ascontiguousarray(X.reshape(-1, B), dtype=np.float32)
+        t_t = np.ascontiguousarray(T.reshape(-1, B), dtype=np.float32)
+
+        if self.cov is not None:
+            cov = self.cov
+            mean_N = self.mean_N
+        else:
+            N_t = np.ascontiguousarray(N.reshape(-1, B), dtype=np.float32)
+            mean_N = np.mean(N_t, axis=0)
+            N_t = N_t - mean_N
+            cov = (N_t.T @ N_t) / (N_t.shape[0] - 1)
+
+        x_t = x_t - mean_N
+        t_t = t_t - mean_N
+        c, low = cho_factor(cov, lower=True, check_finite=False)
+        solved_x = cho_solve((c, low), x_t.T, check_finite=False).T
+        solved_t = cho_solve((c, low), t_t.T, check_finite=False).T
+        numerator = np.sum(t_t * solved_x, axis=1) ** 2
+        denominator = np.sum(t_t * solved_t, axis=1) * np.sum(x_t * solved_x, axis=1)
+        return np.reshape(numerator / denominator, (H, W))
+
+    def set_mean_N(self, mean_N=None):
+        self.mean_N = mean_N
+
+    def set_cov(self, cov=None):
+        self.cov = cov
+
+    def set_device(self, device=None):
+        self.device = device
 
 class LRX():
     def __init__(self, window=(5, 15), cov=None, device=None):
@@ -491,7 +929,9 @@ class CRD():
 def create_AD_model(model_name="RX"):
     model_dict = {"RX": RX(),
                   "LRX": LRX(),
-                  "CRD": CRD()}
+                  "CRD": CRD(),
+                  'AMF': AMF(),
+                  'ACE': ACE()}
     if model_name in model_dict:
         return model_dict[model_name]
     else:
@@ -532,7 +972,6 @@ def windowing(X, window=(5, 15)):
     H0, W0 = H-r_out*2, W-r_out*2
     patches = patches.reshape(H0 * W0, D, B)
     return patches
-
 
 def windowing_gpu(X, window=(5, 15)):
     """GPU implementation of windowing using PyTorch.

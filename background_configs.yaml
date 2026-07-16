@@ -1,0 +1,81 @@
+sample:
+  model_name: Sample
+ledoit_wolf:
+  model_name: LedoitWolf
+shrinkage_0.1:
+  model_name: Shrinkage
+  shrinkage: 0.1
+diagonal_0.1:
+  model_name: Diagonal
+  reg: 0.1
+mcd_0.75:
+  model_name: MCD
+  support_fraction: 0.75
+mrcd_auto_0.75_identity:
+  model_name: MRCD
+  rho: null
+  alpha: 0.75
+  h: null
+  target: identity
+  maxcond: 50.0
+  max_steps: 10
+mrcd_auto_0.75_equicorrelation:
+  model_name: MRCD
+  rho: null
+  alpha: 0.75
+  h: null
+  target: equicorrelation
+  maxcond: 50.0
+  max_steps: 10
+kmrcd_0.75_rbf:
+  model_name: KMRCD
+  alpha: 0.75
+  maxcond: 50.0
+  max_steps: 10
+  kernel: rbf
+
+
+
+
+# shrinkage_02:
+#   model_name: Shrinkage
+#   shrinkage: 0.2
+# shrinkage_05:
+#   model_name: Shrinkage
+#   shrinkage: 0.5
+# diagonal_001:
+#   model_name: Diagonal
+#   reg: 0.01
+# diagonal_05:
+#   model_name: Diagonal
+#   reg: 0.5
+# mcd_support_50:
+#   model_name: MCD
+#   support_fraction: 0.5
+# mcd_support_75:
+#   model_name: MCD
+#   support_fraction: 0.75
+# mrcd_equicorrelation:
+#   model_name: MRCD
+#   rho: 0.1
+#   alpha: 0.75
+#   h: null
+#   target: equicorrelation
+#   maxcond: 50.0
+#   max_steps: 10
+# mrcd_alpha_90:
+#   model_name: MRCD
+#   rho: 0.1
+#   alpha: 0.9
+#   h: null
+#   target: identity
+#   maxcond: 50.0
+#   max_steps: 10
+# mrcd_auto_rho:
+#   model_name: MRCD
+#   rho: null
+#   alpha: 0.75
+#   h: null
+#   target: identity
+#   maxcond: 50.0
+#   max_steps: 10
