@@ -216,7 +216,7 @@ class AMF():
         t_x = self.kernel.compute(t_t, x_t)
         g_tt = (self.kernel.compute(t_t, t_t)[0, 0] - (1 - self.reg) * (t_x @ K_reg_inv @ t_x.T)[0, 0]) / self.reg
 
-        g_tx = (t_x - (1 - self.reg) * k_tilde @ K_reg_inv @ t_x.T) / self.reg
+        g_tx = (t_x.T - (1 - self.reg) * k_tilde @ K_reg_inv @ t_x.T) / self.reg
 
         scores = g_tx ** 2 / g_tt
         return scores.reshape(H, W)
@@ -365,7 +365,7 @@ class ACE():
         t_x = self.kernel.compute(t_t, x_t)
         g_tt = (self.kernel.compute(t_t, t_t)[0, 0] - (1 - self.reg) * (t_x @ K_reg_inv @ t_x.T)[0, 0]) / self.reg
 
-        g_tx = (t_x - (1 - self.reg) * k_tilde @ K_reg_inv @ t_x.T) / self.reg
+        g_tx =  (t_x.T - (1 - self.reg) * k_tilde @ K_reg_inv @ t_x.T) / self.reg
 
         kt_diag = np.diag(k_tilde)
         g_xx = kt_diag - (1 - self.reg) * np.einsum("ij,jk,ik->i", k_tilde, K_reg_inv, k_tilde) # (9) in the paper

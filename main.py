@@ -37,7 +37,7 @@ if __name__ == "__main__":
 
     argument_parser = argparse.ArgumentParser(description='Process results of AD models')
     argument_parser.add_argument('--dataset', type=str, default='Salinas_A', help='Select which dataset to load (default:Salinas).')
-    argument_parser.add_argument('--model', type=str, default='base_ace', required=False, help='Name of the model to process')   
+    argument_parser.add_argument('--model', type=str, default='base_amf', required=False, help='Name of the model to process')   
     argument_parser.add_argument('--retrain', action='store_true', help='Retrain the model if specified')
     argument_parser.set_defaults(retrain=False)
     argument_parser.add_argument('--scaler', type=str, default='Standard', help='Scaler name (overrides experiment_settings Scaler)')
@@ -45,8 +45,8 @@ if __name__ == "__main__":
     argument_parser.add_argument('--background_model', type=str, default='MCD', help='Model to select background sample for statistics (default: Sample).')
     argument_parser.add_argument('--background_config', type=str, default='kmrcd_0.75_rbf', help='Name of the entry in background_configs.yaml to load parameters from (overrides --background_model with its model_name).')
     argument_parser.add_argument('--gpu', type=int, default=3, help='GPU device number to use (default: 0)')
-    argument_parser.add_argument('--subsample', type=str, default='none', help='method to use for data subsampling.')
-    argument_parser.add_argument('--subsample_amount', type=int, default=1000, help='amount of data point to sample')
+    argument_parser.add_argument('--subsample', type=str, default='random', help='method to use for data subsampling.')
+    argument_parser.add_argument('--subsample_amount', type=int, default=100, help='amount of data point to sample')
     args = argument_parser.parse_args()
 
     # CUDA for PyTorch
