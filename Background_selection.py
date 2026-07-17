@@ -509,8 +509,8 @@ class MRCD():
         return covariance, precision
 
     def rmcd(self, X):
-        H, W, B = X.shape
-        X_t = np.reshape(X, (-1,B))
+        #H, W, B = X.shape
+        X_t = np.reshape(X, (-1, X.shape[-1]))
         n_samples, n_features = X_t.shape
 
         if self.h is None:
