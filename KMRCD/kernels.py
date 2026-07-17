@@ -27,7 +27,7 @@ class LinKernel:
 class RbfKernel:
     """RBF Kernel: K(x, y) = exp(-||x - y||^2 / (2 * sigma^2))"""
 
-    def __init__(self, sigma):
+    def __init__(self, sigma=1):
         self.sigma = sigma
 
     def compute(self, x1, x2=None):
