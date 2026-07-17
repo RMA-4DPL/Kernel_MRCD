@@ -63,7 +63,7 @@ class RX():
         if type(self.kernel) is RbfKernel:
             self.kernel = AutoRbfKernel(x_t)
 
-        K_tilde = self.kernel(x_t, x_t)
+        K_tilde = self.kernel.compute(x_t, x_t)
         if self.cov is None:
             self.cov = (1 - self.reg) * K_tilde + (x_t.shape[0] - 1) * self.reg * np.eye(x_t.shape[0]) # (8) in the paper
         K_reg_inv = np.linalg.inv(self.cov)
@@ -207,14 +207,14 @@ class AMF():
         if type(self.kernel) is RbfKernel:
             self.kernel = AutoRbfKernel(x_t)
 
-        k_tilde = self.kernel(x_t)
+        k_tilde = self.kernel.compute(x_t)
         if self.cov is None:
             self.cov = (1 - self.reg) * k_tilde + (x_t.shape[0] - 1) * self.reg * np.eye(x_t.shape[0]) # (8) in the paper
         K_reg_inv = np.linalg.inv(self.cov)
                       
 
-        t_x = self.kernel(t_x, x_t)
-        g_tt = (self.kernel(t_t, t_t)[0, 0] - (1 - self.reg) * (t_x @ K_reg_inv @ t_x)[0, 0]) / self.reg
+        t_x = self.kernel.compute(t_x, x_t)
+        g_tt = (self.kernel.compute(t_t, t_t)[0, 0] - (1 - self.reg) * (t_x @ K_reg_inv @ t_x)[0, 0]) / self.reg
 
         g_tx = (t_x - (1 - self.reg) * k_tilde @ K_reg_inv @ t_x) / self.reg
 
@@ -356,14 +356,14 @@ class ACE():
         if type(self.kernel) is RbfKernel:
             self.kernel = AutoRbfKernel(x_t)
 
-        k_tilde = self.kernel(x_t)
+        k_tilde = self.kernel.compute(x_t)
         if self.cov is None:
             self.cov = (1 - self.reg) * k_tilde + (x_t.shape[0] - 1) * self.reg * np.eye(x_t.shape[0]) # (8) in the paper
         K_reg_inv = np.linalg.inv(self.cov)
                       
 
-        t_x = self.kernel(t_x, x_t)
-        g_tt = (self.kernel(t_t, t_t)[0, 0] - (1 - self.reg) * (t_x @ K_reg_inv @ t_x)[0, 0]) / self.reg
+        t_x = self.kernel.compute(t_x, x_t)
+        g_tt = (self.kernel.compute(t_t, t_t)[0, 0] - (1 - self.reg) * (t_x @ K_reg_inv @ t_x)[0, 0]) / self.reg
 
         g_tx = (t_x - (1 - self.reg) * k_tilde @ K_reg_inv @ t_x) / self.reg
 
