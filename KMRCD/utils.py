@@ -184,13 +184,19 @@ def spatial_rank(K, alpha):
     ook = np.zeros(n)
     for k in range(n):
         tmpA = K[k, k] - K[:, [k]] - K[[k], :] + K
-        tmpB = np.sqrt(K[k, k] + diagK - 2 * K[k, :])
+        # Squared feature-space distances can be slightly negative because of
+        # floating-point round-off.  Duplicate observations can also have an
+        # exact zero distance to k even though their index differs from k.
+        dist2 = np.maximum(K[k, k] + diagK - 2 * K[k, :], 0.0)
+        tmpB = np.sqrt(dist2)
         tmpC = np.outer(tmpB, tmpB)
-        mask = np.ones((n, n), dtype=bool)
-        mask[k, :] = False
-        mask[:, k] = False
-        ook[k] = np.sum(tmpA[mask] / tmpC[mask])
-    ook = (1.0 / n) * np.sqrt(ook)
+        # A zero displacement has spatial sign zero, so terms with a zero
+        # denominator contribute zero rather than NaN/inf.
+        ratios = np.zeros_like(tmpA)
+        np.divide(tmpA, tmpC, out=ratios, where=tmpC > 0.0)
+        ook[k] = np.sum(ratios)
+    # The theoretical values are non-negative; clip tiny negative round-off.
+    ook = (1.0 / n) * np.sqrt(np.maximum(ook, 0.0))
 
     h_indices = np.argsort(ook, kind="stable")
     return kernel_ogk(h_indices[: int(np.ceil(n * alpha))], K)
