@@ -106,6 +106,7 @@ class Kernel_MRCD:
         for sol in solutions:
             converged = False
             for iteration in range(1, self.c_step_iterations_allowed + 1):
+                print((f"Running C-step {iteration} for {sol.name} estimator"))
                 h_subset = sol.hsubset_indices
                 Kx = self.kernel.compute(x[h_subset], x[h_subset])
                 nx = Kx.shape[0]
