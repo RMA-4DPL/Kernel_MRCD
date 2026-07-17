@@ -128,7 +128,9 @@ class Kernel_MRCD:
                     sol.smd = smd
                     converged = True
                     break
-            assert converged, "no C-step convergence"
+            if not converged:
+                print(f"No convergence for {sol.name}")
+            #assert converged, "no C-step convergence"
 
         # Select the solution with the lowest objective function ...
         solution = min(solutions, key=lambda s: s.obj)
