@@ -46,7 +46,7 @@ from . import utils
 class Kernel_MRCD:
 
     def __init__(self, alpha=0.5, kernel=None, c_step_iterations_allowed=100, maxcond=50):
-        self.kernel = kernel if kernel is not None else LinKernel()
+        self.kernel = kernel if kernel is not None else LinKernel() #TODO: fix so that the kernel itself is passed, not str
         self.c_step_iterations_allowed = c_step_iterations_allowed
         self.maxcond = maxcond
         self.alpha = alpha
@@ -129,6 +129,10 @@ class Kernel_MRCD:
                     converged = True
                     break
             if not converged:
+                sigma = np.linalg.svd(Kc, compute_uv=False)
+                sigma = (1 - rho) * scfac * sigma + len(new_hsubset) * rho
+                sol.obj = np.sum(np.log(sigma))
+                sol.smd = smd
                 print(f"No convergence for {sol.name}")
             #assert converged, "no C-step convergence"
 

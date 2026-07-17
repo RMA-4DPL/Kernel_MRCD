@@ -104,13 +104,14 @@ def create_save_dir_name(base, model_name, experiment_settings):
     base = os.path.join(base, experiment_settings['dataset'])
     if 'AC_model' in experiment_settings:
         base= os.path.join(base, f"AC_{experiment_settings['AC_model']['name']}")
+    if 'Subsample' in experiment_settings:
+        base = os.path.join(base, f"Subsample_{experiment_settings['Subsample']['name']}")
+        if experiment_settings['Subsample']['name'] != 'none':
+            base = base + f"_{experiment_settings['Subsample']['amount']}"
     if 'Scaler' in experiment_settings:
         base = os.path.join(base, f"Scaler_{experiment_settings['Scaler']['name']}")
         if 'scaling_scope' in experiment_settings['Scaler']:
             base = base + f"_{experiment_settings['Scaler']['scaling_scope']}"
-    if 'Subsample' in experiment_settings:
-        base = os.path.join(base, f"Subsample_{experiment_settings['Subsample']['name']}")
-        base = base + f"_{experiment_settings['Subsample']['amount']}"
     if model_name is not None:
         base = os.path.join(base, f"{model_name}_{experiment_settings['background_model']}")
 

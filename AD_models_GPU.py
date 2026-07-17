@@ -6,7 +6,7 @@ import time
 import torch
 import torch.nn.functional as F
 import sys
-from kernels import RbfKernel
+from kernels import RbfKernel, AutoRbfKernel
 
 class RX():
     def __init__(self, cov=None, mean_N=None, device=None, kernel=False, gamma=None, reg=1e-6):
@@ -61,8 +61,7 @@ class RX():
         x_t = x_t - self.mean_N
 
         if type(self.kernel) is RbfKernel:
-            self._median_gamma(N_t)
-            self.kernel.sigma2 = self.gamma
+            self.kernel = AutoRbfKernel(x_t)
 
         K_tilde = self.kernel(x_t, x_t)
         if self.cov is None:
@@ -206,8 +205,7 @@ class AMF():
         t_t = t_t - self.mean_N
 
         if type(self.kernel) is RbfKernel:
-            self._median_gamma(x_t)
-            self.kernel.sigma2 = self.gamma
+            self.kernel = AutoRbfKernel(x_t)
 
         k_tilde = self.kernel(x_t)
         if self.cov is None:
@@ -356,8 +354,7 @@ class ACE():
         t_t = t_t - self.mean_N
 
         if type(self.kernel) is RbfKernel:
-            self._median_gamma(x_t)
-            self.kernel.sigma2 = self.gamma
+            self.kernel = AutoRbfKernel(x_t)
 
         k_tilde = self.kernel(x_t)
         if self.cov is None:
