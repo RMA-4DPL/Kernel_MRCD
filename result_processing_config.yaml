@@ -1,35 +1,5 @@
 metrics:
   - AUC
-  - AP
+  # - AP
   # - FP
 
-# Models to evaluate/visualize. Comment out or remove entries to skip them; leave the list
-# empty (or remove the key) to evaluate every model in DL_model_configs.yaml/model_configs.yaml.
-models:
-  - autoad_2d_16_3
-  - autoad_2d_32_3
-  # - autoad_2d_64_3
-  # - autoad_2d_16_4
-  # - autoad_2d_32_4
-  # - autoad_2d_64_4
-  - autoad_3d_16_3
-  - autoad_3d_32_3
-  # - autoad_3d_64_3
-  # - autoad_3d_16_2
-  # - autoad_3d_32_2
-  # - autoad_3d_64_2
-  - autoad_1d_16_3
-  - autoad_1d_32_3
-  # - autoad_1d_64_2
-  # - autoad_1d_32_2
-  - base_rx
-  # - lrx_5_15
-  # - lrx_11_31
-  # - lrx_21_61
-  # - lrx_31_91
-  # - lrx_41_121
-  # - crd_5_15
-  # - crd_11_21
-  # - crd_21_31
-  # - crd_31_41
-  # - crd_41_51

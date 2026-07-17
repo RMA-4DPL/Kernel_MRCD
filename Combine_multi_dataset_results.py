@@ -1,11 +1,15 @@
 import os
+import math
+import pickle
 import pathlib
 import argparse
 import yaml
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from helper_functions import create_save_dir_name
+from helper_functions import create_save_dir_name, load_dataset, normalize_data
+
+MAX_SCENE_COLS = 6
 
 base_filepath_configs = pathlib.Path(__file__).parent.resolve()
 base_filepath = "/mnt/userdata/MaMe/SSDdata/Kernel_MRCD"
@@ -144,28 +148,56 @@ fig.tight_layout()
 fig.savefig(os.path.join(combined_save_dir, "Combined_metrics_comparison.png"))
 plt.close(fig)
 
-# --- Combined scene visualization: stack each dataset's existing scene visualization vertically ---
-scene_images = {}
+# --- Scene visualization: one figure per dataset (visual composite, labels, and every model's
+# score map), wrapped across multiple rows once there are too many models for one row to read. ---
+print("Building per-dataset scene visualizations")
 for dataset in datasets_found:
-    scene_path = os.path.join(dataset_dirs[dataset], "Classical_scene_visualization.png")
-    if os.path.exists(scene_path):
-        scene_images[dataset] = plt.imread(scene_path)
-    else:
-        print(f"Skipping {dataset} in combined scene visualization: {scene_path} not found "
-              f"(run Visualize_classical_results.py for it first).")
+    save_dir = dataset_dirs[dataset]
+    models_present = list(metrics_by_dataset[dataset].index)
 
-if scene_images:
-    fig, axes = plt.subplots(len(scene_images), 1, figsize=(12, 4 * len(scene_images)), squeeze=False)
-    for row, (dataset, img) in enumerate(scene_images.items()):
-        ax = axes[row, 0]
-        ax.imshow(img)
-        ax.set_title(dataset)
+    model_scores = {}
+    for model in models_present:
+        pickle_path = os.path.join(save_dir, model, "Raw_results.pickle")
+        if not os.path.exists(pickle_path):
+            continue
+        with open(pickle_path, "rb") as f:
+            x = pickle.load(f)
+        model_scores[model] = normalize_data(x["Scores"][0])
+        del x
+
+    if not model_scores:
+        print(f"Skipping {dataset} in scene visualization: no Raw_results.pickle found for any model.")
+        continue
+
+    raw_data, _, label_array, label_ids = load_dataset(base_path=base_filepath, dataset_name=dataset)
+    n_bands = raw_data.shape[-1]
+    wavelengths = np.linspace(400, 2500, n_bands)
+    bgr_targets = [495, 555, 760]  # approximate blue/green/red wavelengths (nm)
+    b_idx, g_idx, r_idx = [np.argmin(np.abs(wavelengths - t)) for t in bgr_targets]
+    visual = np.stack([
+        normalize_data(raw_data[0, :, :, r_idx]),
+        normalize_data(raw_data[0, :, :, g_idx]),
+        normalize_data(raw_data[0, :, :, b_idx]),
+    ], axis=-1)
+
+    panels = [("Visual (BGR composite)", visual, None), ("Labels", label_array[0], 'nipy_spectral')]
+    panels += [(model, score, None) for model, score in model_scores.items()]
+
+    ncols = min(MAX_SCENE_COLS, len(panels))
+    nrows = math.ceil(len(panels) / ncols)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4 * ncols, 4 * nrows), squeeze=False)
+    for idx, (title, img, cmap) in enumerate(panels):
+        ax = axes[idx // ncols, idx % ncols]
+        ax.imshow(img, cmap=cmap)
+        ax.set_title(title, fontsize=8)
         ax.axis('off')
-    fig.suptitle("Visual composite, labels, and classical model outputs per dataset")
-    fig.tight_layout()
-    fig.savefig(os.path.join(combined_save_dir, "Combined_scene_visualization.png"))
+    for idx in range(len(panels), nrows * ncols):
+        axes[idx // ncols, idx % ncols].axis('off')
+
+    fig.suptitle(f"{dataset}: visual composite, labels, and model outputs (Scaler={args.scaler}, "
+                 f"scaling_scope={args.scaling_scope}, subsample={args.subsample}_{args.subsample_amount})")
+    fig.tight_layout(rect=[0, 0, 1, 0.97])
+    fig.savefig(os.path.join(combined_save_dir, f"Combined_scene_visualization_{dataset}.png"))
     plt.close(fig)
-else:
-    print("No per-dataset scene visualizations found; skipping combined scene visualization.")
 
 print(f"Saved combined visualizations to {combined_save_dir}")

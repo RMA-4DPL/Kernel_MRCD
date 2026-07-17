@@ -8,11 +8,11 @@ RECALCULATE=#--recalculate
 # background_config/model are not needed here since Process_results.py discovers every
 # "{model}_{background_model}" directory already present under each
 # dataset/scaler/scope/subsample combination).
-SCALERS = none Standard
+SCALERS = Standard
 SCALING_SCOPES = per_sample
-DATASETS = Salinas_A HYDICE #Salinas
-SUBSAMPLES = none #random
-SUBSAMPLE_AMOUNTS = 1000
+DATASETS = Salinas_A HYDICE Salinas
+SUBSAMPLES = random #none
+SUBSAMPLE_AMOUNTS = 100 400 1000
 
 # Default target
 all: process
