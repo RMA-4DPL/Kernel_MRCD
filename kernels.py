@@ -1,6 +1,6 @@
 import numpy as np
 from sklearn.metrics.pairwise import linear_kernel, rbf_kernel
-from KMRCD import LinKernel, RbfKernel, Au
+from KMRCD import LinKernel, RbfKernel, AutoRbfKernel
 
 def custom_rbf_kernel(x1, x2, gamma=1.0):
     """
