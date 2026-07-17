@@ -162,7 +162,7 @@ if __name__ == "__main__":
                 except RuntimeError as e:
                     print(f"Error running model {model} on GPU for row {r}: {e}")
                     print("Falling back to CPU execution.")
-                    AD_model.gpu=True
+                    AD_model.gpu=False
                 
             times[r] = time.time() - start_time
         logging_dict["Runtime"] = times

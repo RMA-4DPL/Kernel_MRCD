@@ -75,7 +75,7 @@ class RX():
             self.cov = (1 - self.reg) * K_tilde + (x_t.shape[0] - 1) * self.reg * np.eye(x_t.shape[0]) # (8) in the paper
         K_reg_inv = np.linalg.inv(self.cov)
         kt_diag = np.diag(K_tilde)
-        scores = kt_diag - (1 - self.reg) * np.einsum("ij,jk,ik->i", K_tilde, K_reg_inv, K_tilde) # (9) in the paper
+        scores = kt_diag - (1 - self.reg) * np.sum((K_tilde @ K_reg_inv) * K_tilde, axis=1) # (9) in the paper
         scores = scores/self.reg
 
         return scores.reshape(H, W)
@@ -394,7 +394,7 @@ class ACE():
         g_tx = g_tx[:, 0]
 
         kt_diag = np.diag(k_tilde)
-        g_xx = kt_diag - (1 - self.reg) * np.einsum("ij,jk,ik->i", k_tilde, K_reg_inv, k_tilde) # (9) in the paper
+        g_xx = kt_diag - (1 - self.reg) * np.sum((k_tilde @ K_reg_inv) * k_tilde, axis=1) # (9) in the paper
         g_xx = g_xx/self.reg
 
         scores = g_tx ** 2 / (g_tt * g_xx)
