@@ -18,6 +18,8 @@ argument_parser = argparse.ArgumentParser(
 argument_parser.add_argument('--datasets', type=str, nargs='+', default=None, help='Datasets to combine (default: auto-discover every dataset under the Results directory that has a summary for the given scaler/scaling_scope)')
 argument_parser.add_argument('--scaler', type=str, default='Standard', help='Scaler name (must match Process_results.py)')
 argument_parser.add_argument('--scaling_scope', type=str, default='per_sample', choices=['global', 'per_sample'], help='Scaling scope for the Scaler (must match Process_results.py)')
+argument_parser.add_argument('--subsample', type=str, default='none', help='Subsampling method (must match Process_results.py/main.py)')
+argument_parser.add_argument('--subsample_amount', type=int, default=1000, help='Amount of data points sampled (must match Process_results.py/main.py)')
 args = argument_parser.parse_args()
 
 print('Loading yaml config')
@@ -26,10 +28,10 @@ with open(os.path.join(base_filepath_configs, "result_processing_config.yaml"), 
 metrics_to_calc = experiment_settings_template['metrics']
 
 
-def discover_datasets(scaler, scaling_scope):
+def discover_datasets(scaler, scaling_scope, subsample, subsample_amount):
     # Each dataset is a subdirectory of Results/ (skip our own "Combined_*" output dirs) that
-    # has already been through Process_results.py for this scaler/scaling_scope, i.e. has a
-    # Results_summary.xlsx under Scaler_{scaler}_{scaling_scope}.
+    # has already been through Process_results.py for this scaler/scaling_scope/subsample, i.e.
+    # has a Results_summary.xlsx under Scaler_{scaler}_{scaling_scope}/Subsample_{subsample}_{amount}.
     found = []
     if not os.path.isdir(base_filepath_results):
         return found
@@ -37,20 +39,24 @@ def discover_datasets(scaler, scaling_scope):
         if entry.startswith("Combined_"):
             continue
         entry_path = os.path.join(base_filepath_results, entry)
-        summary_path = os.path.join(entry_path, f"Scaler_{scaler}_{scaling_scope}", 'Results_summary.xlsx')
+        summary_path = os.path.join(entry_path, f"Scaler_{scaler}_{scaling_scope}",
+                                     f"Subsample_{subsample}_{subsample_amount}", 'Results_summary.xlsx')
         if os.path.isdir(entry_path) and os.path.exists(summary_path):
             found.append(entry)
     return found
 
 
 if args.datasets is None:
-    args.datasets = discover_datasets(args.scaler, args.scaling_scope)
+    args.datasets = discover_datasets(args.scaler, args.scaling_scope, args.subsample, args.subsample_amount)
     print(f"Auto-discovered datasets: {args.datasets}")
     if not args.datasets:
         raise SystemExit(f"No datasets found under {base_filepath_results} with a Results_summary.xlsx for "
-                          f"Scaler_{args.scaler}_{args.scaling_scope}. Run Process_results.py first.")
+                          f"Scaler_{args.scaler}_{args.scaling_scope}/Subsample_{args.subsample}_{args.subsample_amount}. "
+                          f"Run Process_results.py first.")
 
-combined_save_dir = os.path.join(base_filepath_results, "Combined_" + "_".join(args.datasets), f"Scaler_{args.scaler}_{args.scaling_scope}")
+combined_save_dir = os.path.join(base_filepath_results, "Combined_" + "_".join(args.datasets),
+                                  f"Scaler_{args.scaler}_{args.scaling_scope}",
+                                  f"Subsample_{args.subsample}_{args.subsample_amount}")
 os.makedirs(combined_save_dir, exist_ok=True)
 
 
@@ -73,6 +79,9 @@ for dataset in args.datasets:
     experiment_settings['scaler'] = args.scaler
     experiment_settings['scaling_scope'] = args.scaling_scope
     experiment_settings['Scaler'] = {'name': args.scaler, 'scaling_scope': args.scaling_scope}
+    experiment_settings['subsample'] = args.subsample
+    experiment_settings['subsample_amount'] = args.subsample_amount
+    experiment_settings['Subsample'] = {'name': args.subsample, 'amount': args.subsample_amount}
 
     save_dir = create_save_dir_name(base_filepath_results, None, experiment_settings)
     summary_path = os.path.join(save_dir, 'Results_summary.xlsx')
@@ -124,7 +133,8 @@ for i, m in enumerate(metrics_to_calc):
     ax.set_title(m)
     ax.set_ylabel(m)
     ax.legend(fontsize=8)
-fig.suptitle(f"Classical model metric comparison across datasets (Scaler={args.scaler}, scaling_scope={args.scaling_scope})")
+fig.suptitle(f"Classical model metric comparison across datasets (Scaler={args.scaler}, scaling_scope={args.scaling_scope}, "
+             f"subsample={args.subsample}_{args.subsample_amount})")
 fig.tight_layout()
 fig.savefig(os.path.join(combined_save_dir, "Combined_metrics_comparison.png"))
 plt.close(fig)

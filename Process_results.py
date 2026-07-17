@@ -17,6 +17,8 @@ argument_parser.add_argument('--recalculate', action='store_true', help='Recalcu
 argument_parser.set_defaults(recalculate=False)
 argument_parser.add_argument('--scaler', type=str, default='Standard', help='Scaler name (overrides experiment_settings Scaler)')
 argument_parser.add_argument('--scaling_scope', type=str, default='per_sample', choices=['global', 'per_sample'], help='Scaling scope for the Scaler (overrides experiment_settings Scaler scaling_scope)')
+argument_parser.add_argument('--subsample', type=str, default='none', help='Subsampling method (must match main.py)')
+argument_parser.add_argument('--subsample_amount', type=int, default=1000, help='Amount of data points sampled (must match main.py)')
 args = argument_parser.parse_args()
 
 local_filepath = pathlib.Path(__file__).parent.resolve()
@@ -32,6 +34,9 @@ if args.scaler is not None:
     experiment_settings.setdefault('Scaler', {})['name'] = args.scaler
     if args.scaling_scope is not None:
         experiment_settings.setdefault('Scaler', {})['scaling_scope'] = args.scaling_scope
+if args.subsample is not None:
+    experiment_settings.setdefault('Subsample', {})['name'] = args.subsample
+    experiment_settings.setdefault('Subsample', {})['amount'] = args.subsample_amount
 
 
 metric_dict = {}

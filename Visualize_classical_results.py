@@ -17,6 +17,8 @@ argument_parser = argparse.ArgumentParser(
 argument_parser.add_argument('--dataset', type=str, default='Salinas', help='Select which dataset to load (default: Salinas; must match Process_results.py)')
 argument_parser.add_argument('--scaler', type=str, default='Standard', help='Scaler name (overrides experiment_settings Scaler; must match Process_results.py)')
 argument_parser.add_argument('--scaling_scope', type=str, default='per_sample', choices=['global', 'per_sample'], help='Scaling scope for the Scaler (overrides experiment_settings Scaler scaling_scope; must match Process_results.py)')
+argument_parser.add_argument('--subsample', type=str, default='none', help='Subsampling method (must match Process_results.py/main.py)')
+argument_parser.add_argument('--subsample_amount', type=int, default=1000, help='Amount of data points sampled (must match Process_results.py/main.py)')
 args = argument_parser.parse_args()
 
 print('Loading yaml config')
@@ -30,6 +32,9 @@ if args.scaler is not None:
     experiment_settings.setdefault('Scaler', {})['name'] = args.scaler
     if args.scaling_scope is not None:
         experiment_settings.setdefault('Scaler', {})['scaling_scope'] = args.scaling_scope
+if args.subsample is not None:
+    experiment_settings.setdefault('Subsample', {})['name'] = args.subsample
+    experiment_settings.setdefault('Subsample', {})['amount'] = args.subsample_amount
 
 # Process_results.py discovers models from the results directory itself (one subdirectory per
 # "{model_name}_{background_model}" combination, see LXR_test.py) rather than from
