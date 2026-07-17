@@ -3,6 +3,7 @@ from sklearn.metrics import roc_auc_score, average_precision_score, jaccard_scor
 import os
 import cv2
 import scipy.io
+import spectral.io.erdas as erdas
 
 def normalize_data(X):
     return (X - np.min(X))/(np.max(X)- np.min(X))
@@ -100,6 +101,91 @@ def load_hydice(dataset_filepath):
 
     return hydice_data[None, ...], hydice_data[None, ...], hydice_labels[None, ...], labels_ids
 
+def load_pavia(dataset_filepath):
+    pavia_data = scipy.io.loadmat(os.path.join(dataset_filepath, 'Pavia.mat'))['pavia']
+    pavia_labels = scipy.io.loadmat(os.path.join(dataset_filepath, 'Pavia_gt.mat'))['pavia_gt']
+
+    labels_ids = {0: ("Background", 635488),
+        1: ("Water", 65971),
+        2: ("Trees", 7598),
+        3: ("Asphalt", 3090),
+        4: ("Self-Blocking Bricks", 2685),
+        5: ("Bitumen", 6584),
+        6: ("Tiles", 9248),
+        7: ("Shadows", 7287),
+        8: ("Meadows", 42826),
+        9: ("Bare Soil", 2863),
+    }
+
+    # Check that label counts match
+    unique_labels, counts = np.unique(pavia_labels, return_counts=True)
+    for l, label in enumerate(unique_labels):
+        assert counts[l] == labels_ids[label][1]
+
+    return pavia_data[None, ...], pavia_data[None, ...], pavia_labels[None, ...], labels_ids
+
+def load_pavia_u(dataset_filepath):
+    paviaU_data = scipy.io.loadmat(os.path.join(dataset_filepath, 'PaviaU.mat'))['paviaU']
+    paviaU_labels = scipy.io.loadmat(os.path.join(dataset_filepath, 'PaviaU_gt.mat'))['paviaU_gt']
+
+    labels_ids = {0: ("Background", 164624),
+        1: ("Asphalt", 6631),
+        2: ("Meadows", 18649),
+        3: ("Gravel", 2099),
+        4: ("Trees", 3064),
+        5: ("Painted metal sheets", 1345),
+        6: ("Bare Soil", 5029),
+        7: ("Bitumen", 1330),
+        8: ("Self-Blocking Bricks", 3682),
+        9: ("Shadows", 947),
+    }
+
+    # Check that label counts match
+    unique_labels, counts = np.unique(paviaU_labels, return_counts=True)
+    for l, label in enumerate(unique_labels):
+        assert counts[l] == labels_ids[label][1]
+
+    return paviaU_data[None, ...], paviaU_data[None, ...], paviaU_labels[None, ...], labels_ids
+
+def load_sandiego(dataset_filepath):
+    sandiego_data = scipy.io.loadmat(os.path.join(dataset_filepath, 'Sandiego.mat'))['Sandiego']
+    # No ground-truth file is available for this dataset, so everything is labeled as background.
+    sandiego_labels = np.zeros(sandiego_data.shape[:2], dtype=np.uint8)
+
+    labels_ids = {0: ("Background", int(sandiego_labels.size))}
+
+    return sandiego_data[None, ...], sandiego_data[None, ...], sandiego_labels[None, ...], labels_ids
+
+def load_indiana(dataset_filepath):
+    indiana_data = erdas.open(os.path.join(dataset_filepath, '92AV3C.lan')).load()
+    indiana_labels = erdas.open(os.path.join(dataset_filepath, '92AV3GT.GIS')).load().squeeze(axis=-1).astype(np.uint8)
+
+    labels_ids = {0: ("Background", 10659),
+        1: ("Alfalfa", 54),
+        2: ("Corn-notill", 1434),
+        3: ("Corn-mintill", 834),
+        4: ("Corn", 234),
+        5: ("Grass-pasture", 497),
+        6: ("Grass-trees", 747),
+        7: ("Grass-pasture-mowed", 26),
+        8: ("Hay-windrowed", 489),
+        9: ("Oats", 20),
+        10: ("Soybean-notill", 968),
+        11: ("Soybean-mintill", 2468),
+        12: ("Soybean-clean", 614),
+        13: ("Wheat", 212),
+        14: ("Woods", 1294),
+        15: ("Buildings-Grass-Trees-Drives", 380),
+        16: ("Stone-Steel-Towers", 95),
+    }
+
+    # Check that label counts match
+    unique_labels, counts = np.unique(indiana_labels, return_counts=True)
+    for l, label in enumerate(unique_labels):
+        assert counts[l] == labels_ids[label][1]
+
+    return indiana_data[None, ...], indiana_data[None, ...], indiana_labels[None, ...], labels_ids
+
 def create_save_dir_name(base, model_name, experiment_settings):
     base = os.path.join(base, experiment_settings['dataset'])
     if 'AC_model' in experiment_settings:
@@ -120,9 +206,15 @@ def create_save_dir_name(base, model_name, experiment_settings):
 def load_dataset(base_path, dataset_name):
     datasets = {'Salinas': load_salinas,
                 'Salinas_A': load_salinas_A,
-                'HYDICE': load_hydice}
+                'HYDICE': load_hydice,
+                'Pavia': load_pavia,
+                'PaviaU': load_pavia_u,
+                'SanDiego': load_sandiego,
+                'Indiana': load_indiana}
+    # PaviaU shares its data directory with Pavia rather than having its own.
+    dataset_dirs = {'PaviaU': 'Pavia'}
     if dataset_name in datasets:
-        dataset_filepath = os.path.join(base_path, 'Dataset', dataset_name)
+        dataset_filepath = os.path.join(base_path, 'Dataset', dataset_dirs.get(dataset_name, dataset_name))
         raw_data, data, labels, labels_ids = datasets[dataset_name](dataset_filepath)
         return raw_data, data, labels, labels_ids
     else:
