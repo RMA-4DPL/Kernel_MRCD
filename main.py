@@ -73,7 +73,7 @@ if __name__ == "__main__":
         if args.scaling_scope is not None:
             experiment_settings.setdefault('Scaler', {})['scaling_scope'] = args.scaling_scope
     if args.subsample is not None:
-        experiment_settings.setdefault('Subsample', {})['name'] = None if args.subsample.lower() in ('none', 'null') else args.subsample
+        experiment_settings.setdefault('Subsample', {})['name'] = args.subsample
         experiment_settings.setdefault('Subsample', {})['amount'] = args.subsample_amount
         
     retrain = args.retrain
@@ -131,15 +131,15 @@ if __name__ == "__main__":
             print('Getting background statistics.')
             if 'kernel' in background_config:
                 bg_data = row
-                if experiment_settings.get('Subsample'):
-                    sampler = get_subsampler(experiment_settings['Subsample']['Name'])
+                if experiment_settings['Subsample']['name'] != 'none':
+                    sampler = get_subsampler(experiment_settings['Subsample']['name'])
                     bg_data = sampler(bg_data, experiment_settings['Subsample']['amount'])
                 indices = background_model(bg_data)
                 bg = bg_data.reshape((-1, bg_data.shape[-1]))[indices]
             else:
                 bg_data = row
-                if experiment_settings.get('Subsample'):
-                    sampler = get_subsampler(experiment_settings['Subsample']['Name'])
+                if experiment_settings['Subsample']['name'] != 'none':
+                    sampler = get_subsampler(experiment_settings['Subsample']['name'])
                     bg_data = sampler(bg_data, experiment_settings['Subsample']['amount'])
                 mean_N, cov = background_model(bg_data)
                 bg = bg_data.reshape((-1, bg_data.shape[-1]))
