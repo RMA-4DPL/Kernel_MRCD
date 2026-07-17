@@ -213,7 +213,7 @@ class AMF():
         K_reg_inv = np.linalg.inv(self.cov)
                       
 
-        t_x = self.kernel.compute(t_x, x_t)
+        t_x = self.kernel.compute(t_t, x_t)
         g_tt = (self.kernel.compute(t_t, t_t)[0, 0] - (1 - self.reg) * (t_x @ K_reg_inv @ t_x)[0, 0]) / self.reg
 
         g_tx = (t_x - (1 - self.reg) * k_tilde @ K_reg_inv @ t_x) / self.reg
@@ -362,7 +362,7 @@ class ACE():
         K_reg_inv = np.linalg.inv(self.cov)
                       
 
-        t_x = self.kernel.compute(t_x, x_t)
+        t_x = self.kernel.compute(t_t, x_t)
         g_tt = (self.kernel.compute(t_t, t_t)[0, 0] - (1 - self.reg) * (t_x @ K_reg_inv @ t_x)[0, 0]) / self.reg
 
         g_tx = (t_x - (1 - self.reg) * k_tilde @ K_reg_inv @ t_x) / self.reg
