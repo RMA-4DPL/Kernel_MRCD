@@ -121,6 +121,7 @@ if __name__ == "__main__":
             AD_model.load_config(config)
 
         scores = np.zeros((L, H, W), dtype=np.float32)
+        scores_binary = np.zeros((L, H, W), dtype=np.float32)
         times = np.zeros((L,), dtype=np.float32)
         run_gpu=False
         if hasattr(AD_model, 'run_gpu'):
@@ -151,6 +152,7 @@ if __name__ == "__main__":
                 try:
                     if model=='base_rx': # Try to run the model on GPU, if it fails, fall back to CPU execution
                         scores[r] = AD_model(row, bg)
+                        scores_binary[r] = scores[r]
                     else:
                         temp_scores = np.zeros((len(labels_ids)-1, H, W))
                         for i, id in enumerate(labels_ids):
@@ -158,11 +160,16 @@ if __name__ == "__main__":
                                 target = np.mean(row[np.where(label_array[r]==id)], axis=0)
                                 temp_scores[i-1] = AD_model(row, bg, target)
                         scores[r] = np.max(temp_scores, axis=0)
+                        target = np.mean(row[np.where(label_array[r]!=0)], axis=0)
+                        scores_binary[r] = AD_model(row, bg, target)
                     row_computed = True
                 except RuntimeError as e:
                     print(f"Error running model {model} on GPU for row {r}: {e}")
                     print("Falling back to CPU execution.")
                     AD_model.gpu=False
+            # Reset stats for new data
+            AD_model.set_mean_N(None)
+            AD_model.set_cov(None)
                 
             times[r] = time.time() - start_time
         logging_dict["Runtime"] = times
@@ -173,6 +180,7 @@ if __name__ == "__main__":
             save_dict = {"Labels": label_array,
                         "Label_ids": labels_ids,
                         "Scores": scores,
+                        "Scores_binary": scores_binary,
                         "Model_configs": model_configs,
                         "Background_configs": {args.background_config: background_config} if background_config is not None else None,
                         "Experiment_configs": experiment_settings,

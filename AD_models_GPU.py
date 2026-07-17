@@ -73,9 +73,10 @@ class RX():
             self._k_tilde_cache = K_tilde
         if self.cov is None:
             self.cov = (1 - self.reg) * K_tilde + (x_t.shape[0] - 1) * self.reg * np.eye(x_t.shape[0]) # (8) in the paper
-        K_reg_inv = np.linalg.inv(self.cov)
+        c, low = cho_factor(self.cov, lower=True, check_finite=False)
+        solved = cho_solve((c, low), K_tilde, check_finite=False) # K_reg_inv @ K_tilde
         kt_diag = np.diag(K_tilde)
-        scores = kt_diag - (1 - self.reg) * np.sum((K_tilde @ K_reg_inv) * K_tilde, axis=1) # (9) in the paper
+        scores = kt_diag - (1 - self.reg) * np.sum(K_tilde * solved, axis=0) # (9) in the paper, diag(K_tilde @ K_reg_inv @ K_tilde) since both symmetric
         scores = scores/self.reg
 
         return scores.reshape(H, W)
@@ -179,6 +180,7 @@ class AMF():
         self.gpu = False
         self._x_t_cache = None
         self._k_tilde_cache = None
+        self._cho_cache = None
 
     def __call__(self, X, N, T):
         if self.kernel:
@@ -226,13 +228,16 @@ class AMF():
             self._k_tilde_cache = k_tilde
         if self.cov is None:
             self.cov = (1 - self.reg) * k_tilde + (x_t.shape[0] - 1) * self.reg * np.eye(x_t.shape[0]) # (8) in the paper
-        K_reg_inv = np.linalg.inv(self.cov)
-
+            self._cho_cache = None
+        if self._cho_cache is None:
+            self._cho_cache = cho_factor(self.cov, lower=True, check_finite=False)
+        c, low = self._cho_cache
 
         t_x = self.kernel.compute(t_t, x_t)
-        g_tt = (self.kernel.compute(t_t, t_t)[0, 0] - (1 - self.reg) * (t_x @ K_reg_inv @ t_x.T)[0, 0]) / self.reg
+        Kinv_tx = cho_solve((c, low), t_x.T, check_finite=False) # K_reg_inv @ t_x.T
+        g_tt = (self.kernel.compute(t_t, t_t)[0, 0] - (1 - self.reg) * (t_x @ Kinv_tx)[0, 0]) / self.reg
 
-        g_tx = (t_x.T - (1 - self.reg) * k_tilde @ K_reg_inv @ t_x.T) / self.reg
+        g_tx = (t_x.T - (1 - self.reg) * (k_tilde @ Kinv_tx)) / self.reg
 
         scores = g_tx ** 2 / g_tt
         return scores.reshape(H, W)
@@ -258,6 +263,7 @@ class AMF():
         self.kernel = kernel
         self._x_t_cache = None
         self._k_tilde_cache = None
+        self._cho_cache = None
 
     def load_config(self, config_dict):
         if config_dict.get('kernel') is not None:
@@ -325,6 +331,7 @@ class AMF():
 
     def set_cov(self, cov=None):
         self.cov = cov
+        self._cho_cache = None
 
     def set_device(self, device=None):
         self.device = device
@@ -341,6 +348,8 @@ class ACE():
         self.gpu = False
         self._x_t_cache = None
         self._k_tilde_cache = None
+        self._cho_cache = None
+        self._gxx_cache = None
 
     def __call__(self, X, N, T):
         if self.kernel:
@@ -384,18 +393,25 @@ class ACE():
             self._k_tilde_cache = k_tilde
         if self.cov is None:
             self.cov = (1 - self.reg) * k_tilde + (x_t.shape[0] - 1) * self.reg * np.eye(x_t.shape[0]) # (8) in the paper
-        K_reg_inv = np.linalg.inv(self.cov)
-                      
+            self._cho_cache = None
+            self._gxx_cache = None
+        if self._cho_cache is None:
+            self._cho_cache = cho_factor(self.cov, lower=True, check_finite=False)
+        c, low = self._cho_cache
 
         t_x = self.kernel.compute(t_t, x_t)
-        g_tt = (self.kernel.compute(t_t, t_t)[0, 0] - (1 - self.reg) * (t_x @ K_reg_inv @ t_x.T)[0, 0]) / self.reg
+        Kinv_tx = cho_solve((c, low), t_x.T, check_finite=False) # K_reg_inv @ t_x.T
+        g_tt = (self.kernel.compute(t_t, t_t)[0, 0] - (1 - self.reg) * (t_x @ Kinv_tx)[0, 0]) / self.reg
 
-        g_tx =  (t_x.T - (1 - self.reg) * k_tilde @ K_reg_inv @ t_x.T) / self.reg
+        g_tx = (t_x.T - (1 - self.reg) * (k_tilde @ Kinv_tx)) / self.reg
         g_tx = g_tx[:, 0]
 
-        kt_diag = np.diag(k_tilde)
-        g_xx = kt_diag - (1 - self.reg) * np.sum((k_tilde @ K_reg_inv) * k_tilde, axis=1) # (9) in the paper
-        g_xx = g_xx/self.reg
+        if self._gxx_cache is None:
+            kt_diag = np.diag(k_tilde)
+            Kinv_ktilde = cho_solve((c, low), k_tilde, check_finite=False) # K_reg_inv @ k_tilde
+            g_xx = kt_diag - (1 - self.reg) * np.sum(k_tilde * Kinv_ktilde, axis=0) # (9) in the paper
+            self._gxx_cache = g_xx / self.reg
+        g_xx = self._gxx_cache
 
         scores = g_tx ** 2 / (g_tt * g_xx)
         return scores.reshape(H, W)
@@ -421,6 +437,8 @@ class ACE():
         self.kernel = kernel
         self._x_t_cache = None
         self._k_tilde_cache = None
+        self._cho_cache = None
+        self._gxx_cache = None
 
     def load_config(self, config_dict):
         if config_dict.get('kernel') is not None:
@@ -488,6 +506,8 @@ class ACE():
 
     def set_cov(self, cov=None):
         self.cov = cov
+        self._cho_cache = None
+        self._gxx_cache = None
 
     def set_device(self, device=None):
         self.device = device
