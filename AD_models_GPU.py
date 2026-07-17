@@ -17,7 +17,9 @@ class RX():
         self.gamma = gamma
         self.reg = reg
         self.gpu = False
-        
+        self._x_t_cache = None
+        self._k_tilde_cache = None
+
     def __call__(self, X, N):
         if self.kernel:
             return self.run_kernel(X, N)
@@ -63,7 +65,12 @@ class RX():
         if type(self.kernel) is RbfKernel:
             self.kernel = AutoRbfKernel(x_t)
 
-        K_tilde = self.kernel.compute(x_t, x_t)
+        if self._x_t_cache is not None and self._x_t_cache.shape == x_t.shape and np.array_equal(self._x_t_cache, x_t):
+            K_tilde = self._k_tilde_cache
+        else:
+            K_tilde = self.kernel.compute(x_t, x_t)
+            self._x_t_cache = x_t
+            self._k_tilde_cache = K_tilde
         if self.cov is None:
             self.cov = (1 - self.reg) * K_tilde + (x_t.shape[0] - 1) * self.reg * np.eye(x_t.shape[0]) # (8) in the paper
         K_reg_inv = np.linalg.inv(self.cov)
@@ -157,6 +164,8 @@ class RX():
 
     def set_kernel(self, kernel=None):
         self.kernel = kernel
+        self._x_t_cache = None
+        self._k_tilde_cache = None
 
 class AMF():
     def __init__(self, cov=None, mean_N=None, device=None, kernel=False, gamma=None, reg=1e-6, batch_size=2000):
@@ -168,6 +177,8 @@ class AMF():
         self.reg = reg
         self.batch_size = batch_size
         self.gpu = False
+        self._x_t_cache = None
+        self._k_tilde_cache = None
 
     def __call__(self, X, N, T):
         if self.kernel:
@@ -207,11 +218,16 @@ class AMF():
         if type(self.kernel) is RbfKernel:
             self.kernel = AutoRbfKernel(x_t)
 
-        k_tilde = self.kernel.compute(x_t)
+        if self._x_t_cache is not None and self._x_t_cache.shape == x_t.shape and np.array_equal(self._x_t_cache, x_t):
+            k_tilde = self._k_tilde_cache
+        else:
+            k_tilde = self.kernel.compute(x_t)
+            self._x_t_cache = x_t
+            self._k_tilde_cache = k_tilde
         if self.cov is None:
             self.cov = (1 - self.reg) * k_tilde + (x_t.shape[0] - 1) * self.reg * np.eye(x_t.shape[0]) # (8) in the paper
         K_reg_inv = np.linalg.inv(self.cov)
-                      
+
 
         t_x = self.kernel.compute(t_t, x_t)
         g_tt = (self.kernel.compute(t_t, t_t)[0, 0] - (1 - self.reg) * (t_x @ K_reg_inv @ t_x.T)[0, 0]) / self.reg
@@ -240,6 +256,8 @@ class AMF():
 
     def set_kernel(self, kernel=None):
         self.kernel = kernel
+        self._x_t_cache = None
+        self._k_tilde_cache = None
 
     def load_config(self, config_dict):
         if config_dict.get('kernel') is not None:
@@ -321,6 +339,8 @@ class ACE():
         self.reg = reg
         self.batch_size = batch_size
         self.gpu = False
+        self._x_t_cache = None
+        self._k_tilde_cache = None
 
     def __call__(self, X, N, T):
         if self.kernel:
@@ -356,7 +376,12 @@ class ACE():
         if type(self.kernel) is RbfKernel:
             self.kernel = AutoRbfKernel(x_t)
 
-        k_tilde = self.kernel.compute(x_t, x_t)
+        if self._x_t_cache is not None and self._x_t_cache.shape == x_t.shape and np.array_equal(self._x_t_cache, x_t):
+            k_tilde = self._k_tilde_cache
+        else:
+            k_tilde = self.kernel.compute(x_t, x_t)
+            self._x_t_cache = x_t
+            self._k_tilde_cache = k_tilde
         if self.cov is None:
             self.cov = (1 - self.reg) * k_tilde + (x_t.shape[0] - 1) * self.reg * np.eye(x_t.shape[0]) # (8) in the paper
         K_reg_inv = np.linalg.inv(self.cov)
@@ -366,6 +391,7 @@ class ACE():
         g_tt = (self.kernel.compute(t_t, t_t)[0, 0] - (1 - self.reg) * (t_x @ K_reg_inv @ t_x.T)[0, 0]) / self.reg
 
         g_tx =  (t_x.T - (1 - self.reg) * k_tilde @ K_reg_inv @ t_x.T) / self.reg
+        g_tx = g_tx[:, 0]
 
         kt_diag = np.diag(k_tilde)
         g_xx = kt_diag - (1 - self.reg) * np.einsum("ij,jk,ik->i", k_tilde, K_reg_inv, k_tilde) # (9) in the paper
@@ -393,6 +419,8 @@ class ACE():
 
     def set_kernel(self, kernel=None):
         self.kernel = kernel
+        self._x_t_cache = None
+        self._k_tilde_cache = None
 
     def load_config(self, config_dict):
         if config_dict.get('kernel') is not None:
