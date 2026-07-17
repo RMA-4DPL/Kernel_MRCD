@@ -1,7 +1,7 @@
 # Makefile for training different models
 # Variables
 PYTHON=python
-RETRAIN=--retrain
+RETRAIN=#--retrain
 GPU=--gpu=3
 
 # All models defined in model_configs.yaml
@@ -15,12 +15,12 @@ MODELS = base_rx \
 #   ac_model      -> atmospheric correction model (only IARR is implemented in Preproc.py)
 #   scaling_scope -> global or per_sample
 # (LXR_test.py has no train/test split, so no test_split_method axis here)
-SCALERS = none Standard
+SCALERS = Standard #none
 SCALING_SCOPES = per_sample
-BACKGROUND_CONFIGS = kmrcd_0.75_rbf #sample ledoit_wolf shrinkage_0.1 diagonal_0.1 mcd_0.75 mrcd_auto_0.75_identity mrcd_auto_0.75_equicorrelation kmrcd_0.75_rbf
-DATASETS = Salinas_A HYDICE #Salinas
-SUBSAMPLES = none #random
-SUBSAMPLE_AMOUNTS = 1000
+BACKGROUND_CONFIGS = sample ledoit_wolf shrinkage_0.1 diagonal_0.1 mcd_0.75 mrcd_auto_0.75_identity mrcd_auto_0.75_equicorrelation kmrcd_0.75_rbf
+DATASETS = Salinas_A HYDICE Salinas
+SUBSAMPLES = random
+SUBSAMPLE_AMOUNTS = 100 400 1000
 
 # Default target
 all: train
