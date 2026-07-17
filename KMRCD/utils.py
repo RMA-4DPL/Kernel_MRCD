@@ -166,9 +166,10 @@ def sdo(K, alpha, rng=None):
     for _ in range(500):
         i, j = rng.choice(n, size=2, replace=False)
         lam = np.zeros(n)
-        lam[i] = 1.0
-        lam[j] = -1.0
-        a = (K @ lam) / np.sqrt(lam @ K @ lam)
+        # lam[i] = 1.0
+        # lam[j] = -1.0
+        # a = (K @ lam) / np.sqrt(lam @ K @ lam)
+        a = (K[:, i] - K[:, j]) / np.sqrt(K[i, i] + K[j, j] - 2 * K[i, j])
         sdo_val = np.abs(a - np.median(a)) / _mad(a, flag=0)
         mask = sdo_val > g
         g[mask] = sdo_val[mask]
