@@ -369,7 +369,7 @@ class ACE():
 
         kt_diag = np.diag(k_tilde)
         g_xx = kt_diag - (1 - self.reg) * np.einsum("ij,jk,ik->i", k_tilde, K_reg_inv, k_tilde) # (9) in the paper
-        g_xx = scores/self.reg
+        g_xx = g_xx/self.reg
 
         scores = g_tx ** 2 / (g_tt * g_xx)
         return scores.reshape(H, W)
