@@ -234,12 +234,16 @@ for model in model_dirs:
         del x
 
         category_ids = sorted(cid for cid in label_ids if cid != 0)
+        if args.dataset == 'WHU-HI': 
+            category_ids = sorted(cid for cid in label_ids if cid != 7) # Set water as the "normal class" for WHU-HI dataset
         if category_names is None:
             category_names = [label_ids[cid][0] for cid in category_ids]
 
         # Anomaly ground truth: any non-background class counts as an anomaly. Both "scores"
         # and "scores_binary" are evaluated against this same label-derived ground truth.
         anomaly_labels = (label_array != 0).astype(np.int16)
+        if args.dataset == 'WHU-HI':
+            anomaly_labels = (label_array != 7).astype(np.int16) # Set water as the "normal class" for WHU-HI dataset
 
         if not cached_main:
             metric_per_sample, perc_correct_per_sample = compute_sample_metrics(

@@ -97,7 +97,9 @@ if __name__ == "__main__":
 
         print('Loading data')
         data_array_raw, data_array, label_array, labels_ids = load_dataset(base_path=base_filepath, dataset_name=args.dataset)
-
+        id_normal = 0
+        if args.dataset=='WHU-HI':
+            id_normal = 7 # Class for water
         print('Preprocessing data')
         preproc_pipeline = PreprocPipeline(experiment_settings)
         preproc_pipeline.fit(data_array)
