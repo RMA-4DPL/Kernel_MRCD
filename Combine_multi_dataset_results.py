@@ -39,8 +39,11 @@ def discover_datasets(scaler, scaling_scope, subsample, subsample_amount):
         if entry.startswith("Combined_"):
             continue
         entry_path = os.path.join(base_filepath_results, entry)
-        summary_path = os.path.join(entry_path, f"Scaler_{scaler}_{scaling_scope}",
-                                     f"Subsample_{subsample}_{subsample_amount}", 'Results_summary.xlsx')
+        summary_path = os.path.join(entry_path, f"Subsample_{subsample}")
+        if subsample != 'none':
+            summary_path = summary_path + f"_{subsample_amount}"
+        summary_path = os.path.join(summary_path,
+                                     f"Scaler_{scaler}_{scaling_scope}", 'Results_summary.xlsx')
         if os.path.isdir(entry_path) and os.path.exists(summary_path):
             found.append(entry)
     return found
@@ -54,9 +57,11 @@ if args.datasets is None:
                           f"Scaler_{args.scaler}_{args.scaling_scope}/Subsample_{args.subsample}_{args.subsample_amount}. "
                           f"Run Process_results.py first.")
 
-combined_save_dir = os.path.join(base_filepath_results, "Combined_" + "_".join(args.datasets),
+combined_save_dir = os.path.join(base_filepath_results, 'Combined',
                                   f"Scaler_{args.scaler}_{args.scaling_scope}",
-                                  f"Subsample_{args.subsample}_{args.subsample_amount}")
+                                  f"Subsample_{args.subsample}")
+if args.subsample != 'none':
+    combined_save_dir = combined_save_dir + f"_{args.subsample_amount}"
 os.makedirs(combined_save_dir, exist_ok=True)
 
 
