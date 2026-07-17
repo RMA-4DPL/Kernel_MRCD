@@ -9,7 +9,7 @@ RECALCULATE=#--recalculate
 # already present under each dataset/scaler/scope combination).
 SCALERS = none Standard
 SCALING_SCOPES = per_sample
-DATASETS = Salinas_A HYDICE Salinas
+DATASETS = Salinas_A HYDICE #Salinas
 
 # Default target
 all: process
@@ -18,15 +18,13 @@ all: process
 # For each sweep setting (dataset x scaler x scaling_scope), summarizes every model result
 # directory found on disk into Results_summary.xlsx / Results_detailed.xlsx.
 process:
-	@for dataset in $(DATASETS); do \
-		for scaler in $(SCALERS); do \
+	@for scaler in $(SCALERS); do \
+		for dataset in $(DATASETS); do \
 			for scope in $(SCALING_SCOPES); do \
 				echo "=== dataset=$$dataset scaler=$$scaler scaling_scope=$$scope ==="; \
 				$(PYTHON) Process_results.py --dataset=$$dataset --scaler=$$scaler --scaling_scope=$$scope $(RECALCULATE); \
-				$(PYTHON) Visualize_classical_results.py --dataset=$$dataste --scaler=$$scaler --scaling_scope==$$scope
+				$(PYTHON) Visualize_classical_results.py --dataset=$$dataset --scaler=$$scaler --scaling_scope=$$scope; \
 			done; \
 		done; \
+		$(PYTHON) Combine_multi_dataset_results.py --scaler=$$scaler; \
 	done
-
-	$(PYTHON) Combine_multi_dataset_results.py --scaler=none
-	$(PYTHON) Combine_multi_dataset_results.py --scaler=Standard
