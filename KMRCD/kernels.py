@@ -17,22 +17,26 @@ class LinKernel:
     """Linear kernel: K(x1, x2) = x1 @ x2.T"""
 
     def compute(self, x1, x2):
+        if x2 is None:
+            x2 = x1
         x1 = np.asarray(x1)
         x2 = np.asarray(x2)
         return x1 @ x2.T
 
 
 class RbfKernel:
-    """Gaussian RBF kernel: K(x1, x2) = exp(-||x1 - x2||^2 / sigma2)"""
+    """RBF Kernel: K(x, y) = exp(-||x - y||^2 / (2 * sigma^2))"""
 
-    def __init__(self, sigma2):
-        self.sigma2 = sigma2
+    def __init__(self, sigma):
+        self.sigma = sigma
 
-    def compute(self, x1, x2):
+    def compute(self, x1, x2=None):
+        if x2 is None:
+            x2 = x1
         x1 = np.asarray(x1)
         x2 = np.asarray(x2)
         sqdist = cdist(x1, x2, metric="sqeuclidean")
-        return np.exp(-sqdist / self.sigma2)
+        return np.exp(-sqdist / (2 * self.sigma**2))
 
 
 class AutoRbfKernel(RbfKernel):
@@ -41,5 +45,6 @@ class AutoRbfKernel(RbfKernel):
 
     def __init__(self, x):
         x = np.asarray(x)
-        sigma2 = np.median(pdist(x)) ** 2
-        super().__init__(sigma2)
+        distances = pdist(x)**2
+        sigma = np.sqrt(np.median(distances))
+        super().__init__(sigma)

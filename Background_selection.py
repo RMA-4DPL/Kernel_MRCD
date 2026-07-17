@@ -636,6 +636,8 @@ class KMRCD():
             self.maxcond = config_dict['maxcond']
         if 'max_steps' in config_dict:
             self.max_steps = config_dict['max_steps']
+        if 'kernel' in config_dict:
+            self.kernel_method = config_dict['kernel']
 
 
 def select_background_model(background_model="sample"):

@@ -56,11 +56,8 @@ class Kernel_MRCD:
             "The percentage of regular observations, alpha, should be in [0.5-1]"
         )
 
-        # RoS-LSSVM hack, carried over from the MATLAB source: a bare
-        # RbfKernel (not the automatically-tuned subclass) is not usable
-        # here, so it is swapped for an AutoRbfKernel fit on the data.
-        if type(self.kernel) is RbfKernel:
-            print("Warning: kMRCD switches to AutoRbfKernel in case a RbfKernel was specified!!")
+        if type(self.kernel) is str and self.kernel.lower() == 'rbf':
+            print("Warning: kMRCD switches to AutoRbfKernel in case 'rbf' was specified!!")
             self.kernel = AutoRbfKernel(x)
 
         x = np.asarray(x, dtype=float)
