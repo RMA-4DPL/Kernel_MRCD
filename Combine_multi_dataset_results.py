@@ -79,74 +79,97 @@ def parse_mean_std(series):
 
 
 # --- Gather each dataset's summary results (produced by Process_results.py) ---
-dataset_dirs = {}
-metrics_by_dataset = {}
-perc_by_dataset = {}
-for dataset in args.datasets:
-    experiment_settings = dict(experiment_settings_template)
-    experiment_settings['dataset'] = dataset
-    experiment_settings['scaler'] = args.scaler
-    experiment_settings['scaling_scope'] = args.scaling_scope
-    experiment_settings['Scaler'] = {'name': args.scaler, 'scaling_scope': args.scaling_scope}
-    experiment_settings['subsample'] = args.subsample
-    experiment_settings['subsample_amount'] = args.subsample_amount
-    experiment_settings['Subsample'] = {'name': args.subsample, 'amount': args.subsample_amount}
+def gather_dataset_summaries(datasets, summary_filename):
+    dataset_dirs = {}
+    metrics_by_dataset = {}
+    perc_by_dataset = {}
+    for dataset in datasets:
+        experiment_settings = dict(experiment_settings_template)
+        experiment_settings['dataset'] = dataset
+        experiment_settings['scaler'] = args.scaler
+        experiment_settings['scaling_scope'] = args.scaling_scope
+        experiment_settings['Scaler'] = {'name': args.scaler, 'scaling_scope': args.scaling_scope}
+        experiment_settings['subsample'] = args.subsample
+        experiment_settings['subsample_amount'] = args.subsample_amount
+        experiment_settings['Subsample'] = {'name': args.subsample, 'amount': args.subsample_amount}
 
-    save_dir = create_save_dir_name(base_filepath_results, None, experiment_settings)
-    summary_path = os.path.join(save_dir, 'Results_summary.xlsx')
-    if not os.path.exists(summary_path):
-        print(f"Skipping {dataset}: no summary found at {summary_path}. Run Process_results.py for it first.")
-        continue
+        save_dir = create_save_dir_name(base_filepath_results, None, experiment_settings)
+        summary_path = os.path.join(save_dir, summary_filename)
+        if not os.path.exists(summary_path):
+            print(f"Skipping {dataset} for {summary_filename}: not found at {summary_path}.")
+            continue
 
-    dataset_dirs[dataset] = save_dir
-    metrics_by_dataset[dataset] = pd.read_excel(summary_path, sheet_name='Metrics', index_col=0)
-    perc_by_dataset[dataset] = pd.read_excel(summary_path, sheet_name='Percentage correct', index_col=0)
+        dataset_dirs[dataset] = save_dir
+        metrics_by_dataset[dataset] = pd.read_excel(summary_path, sheet_name='Metrics', index_col=0)
+        perc_by_dataset[dataset] = pd.read_excel(summary_path, sheet_name='Percentage correct', index_col=0)
+    return dataset_dirs, metrics_by_dataset, perc_by_dataset
 
+
+def write_combined_summary(metrics_by_dataset, perc_by_dataset, datasets_found, models, out_path):
+    with pd.ExcelWriter(out_path, engine='xlsxwriter') as writer:
+        for m in metrics_to_calc:
+            rows = {}
+            for model in models:
+                rows[model] = [metrics_by_dataset[d].loc[model, m] if model in metrics_by_dataset[d].index else None
+                                for d in datasets_found]
+            pd.DataFrame.from_dict(rows, orient='index', columns=datasets_found).to_excel(writer, sheet_name=m, index=True)
+        for dataset in datasets_found:
+            perc_by_dataset[dataset].to_excel(writer, sheet_name=f"PC {dataset}"[:31], index=True)
+    print(f"Saved combined summary to {out_path}")
+
+
+def plot_combined_metrics(metrics_by_dataset, datasets_found, models, title_suffix, out_path):
+    n_datasets = len(datasets_found)
+    x = np.arange(len(models))
+    width = 0.8 / max(n_datasets, 1)
+    fig, axes = plt.subplots(1, len(metrics_to_calc), figsize=(6 * len(metrics_to_calc), 5), squeeze=False)
+    for i, m in enumerate(metrics_to_calc):
+        ax = axes[0, i]
+        for j, dataset in enumerate(datasets_found):
+            df = metrics_by_dataset[dataset]
+            present = [model in df.index for model in models]
+            means = np.full(len(models), np.nan)
+            stds = np.full(len(models), np.nan)
+            vals_mean, vals_std = parse_mean_std(df.loc[[model for model in models if model in df.index], m])
+            means[present] = vals_mean
+            stds[present] = vals_std
+            ax.bar(x + j * width - 0.4 + width / 2, means, width, yerr=stds, capsize=3, label=dataset)
+        ax.set_xticks(x)
+        ax.set_xticklabels(models, rotation=45, ha='right')
+        ax.set_title(m)
+        ax.set_ylabel(m)
+        ax.legend(fontsize=8)
+    fig.suptitle(f"Classical model metric comparison across datasets{title_suffix} (Scaler={args.scaler}, "
+                 f"scaling_scope={args.scaling_scope}, subsample={args.subsample}_{args.subsample_amount})")
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+
+
+dataset_dirs, metrics_by_dataset, perc_by_dataset = gather_dataset_summaries(args.datasets, 'Results_summary.xlsx')
 if not metrics_by_dataset:
     raise SystemExit("No dataset summaries found; nothing to combine.")
 
 datasets_found = list(metrics_by_dataset.keys())
 models = sorted(set().union(*(df.index for df in metrics_by_dataset.values())))
 
-# --- Combined excel: one sheet per metric, rows=model, columns=dataset ---
-combined_summary_path = os.path.join(combined_save_dir, 'Combined_results_summary.xlsx')
-with pd.ExcelWriter(combined_summary_path, engine='xlsxwriter') as writer:
-    for m in metrics_to_calc:
-        rows = {}
-        for model in models:
-            rows[model] = [metrics_by_dataset[d].loc[model, m] if model in metrics_by_dataset[d].index else None
-                            for d in datasets_found]
-        pd.DataFrame.from_dict(rows, orient='index', columns=datasets_found).to_excel(writer, sheet_name=m, index=True)
-    for dataset in datasets_found:
-        perc_by_dataset[dataset].to_excel(writer, sheet_name=f"PC {dataset}"[:31], index=True)
-print(f"Saved combined summary to {combined_summary_path}")
+write_combined_summary(metrics_by_dataset, perc_by_dataset, datasets_found, models,
+                        os.path.join(combined_save_dir, 'Combined_results_summary.xlsx'))
+plot_combined_metrics(metrics_by_dataset, datasets_found, models, "",
+                       os.path.join(combined_save_dir, "Combined_metrics_comparison.png"))
 
-# --- Combined metric comparison: grouped bar chart per metric, grouped by dataset ---
-n_datasets = len(datasets_found)
-x = np.arange(len(models))
-width = 0.8 / max(n_datasets, 1)
-fig, axes = plt.subplots(1, len(metrics_to_calc), figsize=(6 * len(metrics_to_calc), 5), squeeze=False)
-for i, m in enumerate(metrics_to_calc):
-    ax = axes[0, i]
-    for j, dataset in enumerate(datasets_found):
-        df = metrics_by_dataset[dataset]
-        present = [model in df.index for model in models]
-        means = np.full(len(models), np.nan)
-        stds = np.full(len(models), np.nan)
-        vals_mean, vals_std = parse_mean_std(df.loc[[model for model in models if model in df.index], m])
-        means[present] = vals_mean
-        stds[present] = vals_std
-        ax.bar(x + j * width - 0.4 + width / 2, means, width, yerr=stds, capsize=3, label=dataset)
-    ax.set_xticks(x)
-    ax.set_xticklabels(models, rotation=45, ha='right')
-    ax.set_title(m)
-    ax.set_ylabel(m)
-    ax.legend(fontsize=8)
-fig.suptitle(f"Classical model metric comparison across datasets (Scaler={args.scaler}, scaling_scope={args.scaling_scope}, "
-             f"subsample={args.subsample}_{args.subsample_amount})")
-fig.tight_layout()
-fig.savefig(os.path.join(combined_save_dir, "Combined_metrics_comparison.png"))
-plt.close(fig)
+# --- Binary results: same combination, scored from Results_summary_binary.xlsx (Scores_binary
+# vs. ground truth, see Process_results.py). Datasets without it yet are skipped. ---
+_, metrics_by_dataset_binary, perc_by_dataset_binary = gather_dataset_summaries(args.datasets, 'Results_summary_binary.xlsx')
+if not metrics_by_dataset_binary:
+    print("No binary dataset summaries found; skipping combined binary summary/comparison.")
+else:
+    datasets_found_binary = list(metrics_by_dataset_binary.keys())
+    models_binary = sorted(set().union(*(df.index for df in metrics_by_dataset_binary.values())))
+    write_combined_summary(metrics_by_dataset_binary, perc_by_dataset_binary, datasets_found_binary, models_binary,
+                            os.path.join(combined_save_dir, 'Combined_results_summary_binary.xlsx'))
+    plot_combined_metrics(metrics_by_dataset_binary, datasets_found_binary, models_binary, " (binary)",
+                           os.path.join(combined_save_dir, "Combined_metrics_comparison_binary.png"))
 
 # --- Scene visualization: one figure per dataset (visual composite, labels, and every model's
 # score map), wrapped across multiple rows once there are too many models for one row to read. ---

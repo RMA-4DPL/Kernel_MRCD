@@ -17,7 +17,7 @@ MODELS = base_rx \
 # (LXR_test.py has no train/test split, so no test_split_method axis here)
 SCALERS = Standard #none
 SCALING_SCOPES = per_sample
-BACKGROUND_CONFIGS = kmrcd_0.75_rbf #sample ledoit_wolf shrinkage_0.1 diagonal_0.1 mcd_0.75 mrcd_auto_0.75_identity mrcd_auto_0.75_equicorrelation 
+BACKGROUND_CONFIGS = sample ledoit_wolf shrinkage_0.1 diagonal_0.1 mcd_0.5 mcd_0.75 mrcd_auto_0.5_identity mrcd_auto_0.75_identity mrcd_auto_0.75_equicorrelation kmrcd_0.75_rbf
 DATASETS = Salinas_A HYDICE Salinas
 SUBSAMPLES = random
 SUBSAMPLE_AMOUNTS = 100 400 #1000
@@ -29,12 +29,12 @@ all: train
 # For each sweep setting (subsample x subsample_amount x vis_scale x ac_model x scaling_scope), runs every
 # model in MODELS.
 train:
-	@for background_config in $(BACKGROUND_CONFIGS); do\
-		for scaler in $(SCALERS); do \
-			for subsample in $(SUBSAMPLES); do \
-				for amount in $(SUBSAMPLE_AMOUNTS); do \
-					for scope in $(SCALING_SCOPES); do \
-						for dataset in $(DATASETS); do \
+	@for dataset in $(DATASETS); do \
+		for background_config in $(BACKGROUND_CONFIGS); do\
+			for scaler in $(SCALERS); do \
+				for subsample in $(SUBSAMPLES); do \
+					for amount in $(SUBSAMPLE_AMOUNTS); do \
+						for scope in $(SCALING_SCOPES); do \
 							for model in $(MODELS); do\
 								echo "=== model=$$model dataset=$$dataset scaler=$$scaler scaling_scope=$$scope subsample=$$subsample subsample_amount=$$amount --background_config=$$background_config ==="; \
 								$(PYTHON) main.py --model $$model $(GPU) $(RETRAIN) \
