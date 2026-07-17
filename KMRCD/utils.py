@@ -85,7 +85,8 @@ def kernel_ogk(h_indices, K):
 
     # Covariance matrix
     K_tilde = center(K_h)
-    U, S_F, _ = np.linalg.svd(K_tilde)
+    # U, S_F, _ = np.linalg.svd(K_tilde)
+    S_F, U = np.linalg.eigh(K_tilde)
     mask = S_F > 1000 * _EPS
     U = U[:, mask]
     S_F = S_F[mask]
@@ -138,7 +139,8 @@ def sscm(K):
     sqrtD = np.sqrt(1.0 / d)
     K_tilde = sqrtD[:, None] * Kc * sqrtD[None, :]
 
-    U, S_F, _ = np.linalg.svd(K_tilde)
+    # U, S_F, _ = np.linalg.svd(K_tilde)
+    S_F, U = np.linalg.eigh(K_tilde)
     mask = S_F > 1000 * _EPS
     U = U[:, mask]
     S_F = S_F[mask]
