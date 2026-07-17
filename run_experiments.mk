@@ -17,7 +17,7 @@ MODELS = base_rx \
 # (LXR_test.py has no train/test split, so no test_split_method axis here)
 SCALERS = none Standard
 SCALING_SCOPES = per_sample 
-BACKGROUND_CONFIGS = sample ledoit_wolf shrinkage_0.1 diagonal_0.1 mcd_0.75 mrcd_auto_0.75_identity mrcd_auto_0.75_equicorrelation kmrcd_0.75_rbf
+BACKGROUND_CONFIGS = kmrcd_0.75_rbf #sample ledoit_wolf shrinkage_0.1 diagonal_0.1 mcd_0.75 mrcd_auto_0.75_identity mrcd_auto_0.75_equicorrelation kmrcd_0.75_rbf
 DATASETS = Salinas_A HYDICE #Salinas
 
 # Default target

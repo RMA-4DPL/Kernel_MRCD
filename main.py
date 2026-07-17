@@ -36,7 +36,7 @@ if __name__ == "__main__":
 
     argument_parser = argparse.ArgumentParser(description='Process results of AD models')
     argument_parser.add_argument('--dataset', type=str, default='Salinas_A', help='Select which dataset to load (default:Salinas).')
-    argument_parser.add_argument('--model', type=str, default='base_rx', required=False, help='Name of the model to process')   
+    argument_parser.add_argument('--model', type=str, default='base_ace', required=False, help='Name of the model to process')   
     argument_parser.add_argument('--retrain', action='store_true', help='Retrain the model if specified')
     argument_parser.set_defaults(retrain=False)
     argument_parser.add_argument('--scaler', type=str, default='Standard', help='Scaler name (overrides experiment_settings Scaler)')
@@ -142,7 +142,7 @@ if __name__ == "__main__":
                         for i, id in enumerate(labels_ids):
                             if id != 0:
                                 target = np.mean(row[np.where(label_array[r]==id)], axis=0)
-                                temp_scores[i-1] = AD_model.run_gpu(row, bg, target)
+                                temp_scores[i-1] = AD_model(row, bg, target)
                         scores[r] = np.max(temp_scores, axis=0)
                     row_computed = True
                 except RuntimeError as e:
