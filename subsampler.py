@@ -1,4 +1,4 @@
-from numpy import np
+import numpy as np
 
 
 def subsample_data_random(X, n_samples=1000, random_seed=4):
