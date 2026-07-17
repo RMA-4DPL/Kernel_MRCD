@@ -35,7 +35,13 @@ class RbfKernel:
             x2 = x1
         x1 = np.asarray(x1)
         x2 = np.asarray(x2)
-        sqdist = cdist(x1, x2, metric="sqeuclidean")
+        if x1.shape[0] * x2.shape[0] >= 500_000:
+            x1_sq = np.einsum("ij,ij->i", x1, x1)
+            x2_sq = np.einsum("ij,ij->i", x2, x2)
+            sqdist = x1_sq[:, None] + x2_sq[None, :] - 2 * x1 @ x2.T
+            np.maximum(sqdist, 0, out=sqdist)
+        else:
+            sqdist = cdist(x1, x2, metric="sqeuclidean")
         return np.exp(-sqdist / (2 * self.sigma**2))
 
 
