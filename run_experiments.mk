@@ -1,7 +1,7 @@
 # Makefile for training different models
 # Variables
 PYTHON=python
-RETRAIN=#--retrain
+RETRAIN=--retrain
 GPU=--gpu=3
 
 # All models defined in model_configs.yaml
@@ -18,7 +18,11 @@ MODELS = base_rx \
 SCALERS = Standard #none
 SCALING_SCOPES = per_sample
 BACKGROUND_CONFIGS = sample ledoit_wolf shrinkage_0.1 diagonal_0.1 mcd_0.5 mcd_0.75 mrcd_auto_0.5_identity mrcd_auto_0.75_identity mrcd_auto_0.75_equicorrelation kmrcd_0.75_rbf
-DATASETS = Salinas_A HYDICE Salinas
+DATASETS = HYDICE Salinas_A \
+           ABU_beach_3 ABU_airport_4 ABU_urban_3 ABU_beach_2 ABU_urban_1 \
+           ABU_airport_1 ABU_airport_2 ABU_airport_3 ABU_urban_4 ABU_urban_5 ABU_urban_2 \
+           ABU_beach_4 ABU_beach_1 \
+           Indiana PaviaU Salinas cooke_city SanDiego WHU-HI Pavia
 SUBSAMPLES = none
 SUBSAMPLE_AMOUNTS = 100 #400 1000
 

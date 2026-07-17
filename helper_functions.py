@@ -1,8 +1,11 @@
 import numpy as np
 from sklearn.metrics import roc_auc_score, average_precision_score, jaccard_score
 import os
+import glob
+import functools
 import cv2
 import scipy.io
+import spectral
 import spectral.io.erdas as erdas
 
 def normalize_data(X):
@@ -186,6 +189,78 @@ def load_indiana(dataset_filepath):
 
     return indiana_data[None, ...], indiana_data[None, ...], indiana_labels[None, ...], labels_ids
 
+def load_whu_hi(dataset_filepath):
+    whu_hi_data = np.asarray(spectral.open_image(os.path.join(dataset_filepath, 'WHU-Hi-LongKou.hdr')).load())
+    whu_hi_labels = np.asarray(spectral.open_image(os.path.join(dataset_filepath, 'WHU-Hi-LongKou_gt.hdr')).load()).squeeze(axis=-1).astype(np.uint8)
+
+    labels_ids = {0: ("Unclassified", 15458),
+        1: ("Corn", 34511),
+        2: ("Cotton", 8374),
+        3: ("Sesame", 3031),
+        4: ("Broad-leaf soybean", 63212),
+        5: ("Narrow-leaf soybean", 4151),
+        6: ("Rice", 11854),
+        7: ("Water", 67056),
+        8: ("Roads and houses", 7124),
+        9: ("Mixed weed", 5229),
+    }
+
+    # Check that label counts match
+    unique_labels, counts = np.unique(whu_hi_labels, return_counts=True)
+    for l, label in enumerate(unique_labels):
+        assert counts[l] == labels_ids[label][1]
+
+    return whu_hi_data[None, ...], whu_hi_data[None, ...], whu_hi_labels[None, ...], labels_ids
+
+def load_abu(dataset_filepath, filename):
+    abu_mat = scipy.io.loadmat(os.path.join(dataset_filepath, filename))
+    abu_data = abu_mat['data']
+    abu_labels = abu_mat['map']
+
+    unique_labels, counts = np.unique(abu_labels, return_counts=True)
+    labels_ids = {int(label): (name, int(count))
+                  for label, name, count in zip(unique_labels, ["Background", "Anomaly"], counts)}
+
+    return abu_data[None, ...], abu_data[None, ...], abu_labels[None, ...], labels_ids
+
+def _parse_envi_roi_points(txt_path):
+    with open(txt_path, 'r') as f:
+        lines = f.readlines()
+
+    # ROI points are listed as consecutive (id, x, y) blocks, one block per
+    # "; ROI npts: N" entry declared earlier in the file, in the same order.
+    roi_npts = [int(line.split(':')[1]) for line in lines if line.strip().startswith('; ROI npts:')]
+    header_idx = next(i for i, line in enumerate(lines) if line.strip().startswith('; ID'))
+    point_lines = [line.split() for line in lines[header_idx + 1:] if line.strip()]
+
+    rois = []
+    idx = 0
+    for npts in roi_npts:
+        block = point_lines[idx:idx + npts]
+        rois.append([(int(x), int(y)) for _, x, y in block])
+        idx += npts
+    return rois
+
+def load_cooke_city(dataset_filepath):
+    cooke_city_data = np.asarray(spectral.open_image(os.path.join(dataset_filepath, 'HyMap', 'self_test_refl.hdr')).load())
+
+    H, W = cooke_city_data.shape[:2]
+    cooke_city_labels = np.zeros((H, W), dtype=np.uint8)
+    roi_filepaths = glob.glob(os.path.join(dataset_filepath, 'ROI', '**', '*.txt'), recursive=True)
+    for roi_filepath in roi_filepaths:
+        for points in _parse_envi_roi_points(roi_filepath):
+            # A single-point ROI marks a sub-pixel target's center; the
+            # surrounding 'Sub'/'Guard' ROIs are exclusion bands, not targets.
+            if len(points) == 1:
+                x, y = points[0]
+                cooke_city_labels[y, x] = 1
+
+    labels_ids = {0: ("Background", int(np.sum(cooke_city_labels == 0))),
+        1: ("Target", int(np.sum(cooke_city_labels == 1))),
+    }
+
+    return cooke_city_data[None, ...], cooke_city_data[None, ...], cooke_city_labels[None, ...], labels_ids
+
 def create_save_dir_name(base, model_name, experiment_settings):
     base = os.path.join(base, experiment_settings['dataset'])
     if 'AC_model' in experiment_settings:
@@ -203,6 +278,8 @@ def create_save_dir_name(base, model_name, experiment_settings):
 
     return base
 
+ABU_SCENE_COUNTS = {'airport': 4, 'beach': 4, 'urban': 5}
+
 def load_dataset(base_path, dataset_name):
     datasets = {'Salinas': load_salinas,
                 'Salinas_A': load_salinas_A,
@@ -210,9 +287,16 @@ def load_dataset(base_path, dataset_name):
                 'Pavia': load_pavia,
                 'PaviaU': load_pavia_u,
                 'SanDiego': load_sandiego,
-                'Indiana': load_indiana}
-    # PaviaU shares its data directory with Pavia rather than having its own.
-    dataset_dirs = {'PaviaU': 'Pavia'}
+                'Indiana': load_indiana,
+                'WHU-HI': load_whu_hi,
+                'cooke_city': load_cooke_city}
+    for category, count in ABU_SCENE_COUNTS.items():
+        for i in range(1, count + 1):
+            datasets[f"ABU_{category}_{i}"] = functools.partial(load_abu, filename=f"abu-{category}-{i}.mat")
+    # Some datasets share a directory rather than having their own.
+    dataset_dirs = {'PaviaU': 'Pavia', 'cooke_city': os.path.join('cooke_city', 'self_test')}
+    dataset_dirs.update({f"ABU_{category}_{i}": 'Airport-Beach-Urban'
+                         for category, count in ABU_SCENE_COUNTS.items() for i in range(1, count + 1)})
     if dataset_name in datasets:
         dataset_filepath = os.path.join(base_path, 'Dataset', dataset_dirs.get(dataset_name, dataset_name))
         raw_data, data, labels, labels_ids = datasets[dataset_name](dataset_filepath)
