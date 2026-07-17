@@ -1,7 +1,7 @@
 # Makefile for training different models
 # Variables
 PYTHON=python
-RETRAIN=#--retrain
+RETRAIN=--retrain
 GPU=--gpu=3
 
 # All models defined in model_configs.yaml

@@ -8,9 +8,10 @@ from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor
 import copy
 from AD_models_GPU import create_AD_model
-from Preproc import PreprocPipeline, subsample_data
+from Preproc import PreprocPipeline
 from helper_functions import load_dataset, create_save_dir_name
 from Background_selection import select_background_model
+from subsampler import get_subsampler
 from kernels import get_kernel
 import pickle
 from multiprocessing import cpu_count
@@ -44,6 +45,8 @@ if __name__ == "__main__":
     argument_parser.add_argument('--background_model', type=str, default='MCD', help='Model to select background sample for statistics (default: Sample).')
     argument_parser.add_argument('--background_config', type=str, default='kmrcd_0.75_rbf', help='Name of the entry in background_configs.yaml to load parameters from (overrides --background_model with its model_name).')
     argument_parser.add_argument('--gpu', type=int, default=3, help='GPU device number to use (default: 0)')
+    argument_parser.add_argument('--subsample', type=str, default='none', help='method to use for data subsampling.')
+    argument_parser.add_argument('--subsample_amount', type=int, default=1000, help='amount of data point to sample')
     args = argument_parser.parse_args()
 
     # CUDA for PyTorch
@@ -69,6 +72,10 @@ if __name__ == "__main__":
         experiment_settings.setdefault('Scaler', {})['name'] = args.scaler
         if args.scaling_scope is not None:
             experiment_settings.setdefault('Scaler', {})['scaling_scope'] = args.scaling_scope
+    if args.subsample is not None:
+        experiment_settings.setdefault('Subsample', {})['name'] = None if args.subsample.lower() in ('none', 'null') else args.subsample
+        experiment_settings.setdefault('Subsample', {})['amount'] = args.subsample_amount
+        
     retrain = args.retrain
 
     model = list(model_configs.keys())[0]
@@ -113,7 +120,6 @@ if __name__ == "__main__":
             print(f"Loading {model} config")
             AD_model.load_config(config)
 
-
         scores = np.zeros((L, H, W), dtype=np.float32)
         times = np.zeros((L,), dtype=np.float32)
         run_gpu=False
@@ -124,11 +130,19 @@ if __name__ == "__main__":
             start_time = time.time()
             print('Getting background statistics.')
             if 'kernel' in background_config:
-                indices = background_model(row)
-                bg = row.reshape((-1, row.shape[-1]))[indices]
+                bg_data = row
+                if experiment_settings.get('Subsample'):
+                    sampler = get_subsampler(experiment_settings['Subsample']['Name'])
+                    bg_data = sampler(bg_data, experiment_settings['Subsample']['amount'])
+                indices = background_model(bg_data)
+                bg = bg_data.reshape((-1, bg_data.shape[-1]))[indices]
             else:
-                mean_N, cov = background_model(row)
-                bg = row.reshape((-1, row.shape[-1]))
+                bg_data = row
+                if experiment_settings.get('Subsample'):
+                    sampler = get_subsampler(experiment_settings['Subsample']['Name'])
+                    bg_data = sampler(bg_data, experiment_settings['Subsample']['amount'])
+                mean_N, cov = background_model(bg_data)
+                bg = bg_data.reshape((-1, bg_data.shape[-1]))
                 AD_model.set_mean_N(mean_N)
                 AD_model.set_cov(cov)
             print('Calculating anomaly scores.')
