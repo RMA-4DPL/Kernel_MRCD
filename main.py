@@ -130,6 +130,10 @@ if __name__ == "__main__":
             AD_model.gpu=True
             AD_model.set_device(device)
         for r, row in tqdm(enumerate(data_array), total=len(data_array)):
+            flag_subsample = False
+            if row.shape[0] * row.shape[1]>120000 and 'kernel' in background_config:
+                row = row[::2,::2]
+                flag_subsample = True
             start_time = time.time()
             print('Getting background statistics.')
             if 'kernel' in background_config:
@@ -153,17 +157,26 @@ if __name__ == "__main__":
             while not row_computed:
                 try:
                     if model=='base_rx': # Try to run the model on GPU, if it fails, fall back to CPU execution
-                        scores[r] = AD_model(row, bg)
+                        row_scores = AD_model(row, bg)
+                        if flag_subsample:
+                            row_scores = row_scores.repeat(2, axis=0).repeat(2, axis=1)[:H, :W]
+                        scores[r] = row_scores
                         scores_binary[r] = scores[r]
                     else:
                         temp_scores = np.zeros((len(labels_ids)-1, H, W))
                         for i, id in enumerate(labels_ids):
                             if id != 0:
                                 target = np.mean(row[np.where(label_array[r]==id)], axis=0)
-                                temp_scores[i-1] = AD_model(row, bg, target)
+                                row_scores = AD_model(row, bg, target)
+                                if flag_subsample:
+                                    row_scores = row_scores.repeat(2, axis=0).repeat(2, axis=1)[:H, :W]
+                                temp_scores[i-1] = row_scores
                         scores[r] = np.max(temp_scores, axis=0)
                         target = np.mean(row[np.where(label_array[r]!=0)], axis=0)
-                        scores_binary[r] = AD_model(row, bg, target)
+                        row_scores = AD_model(row, bg, target)
+                        if flag_subsample:
+                            row_scores = row_scores.repeat(2, axis=0).repeat(2, axis=1)[:H, :W]
+                        scores_binary[r] = row_scores
                     row_computed = True
                 except RuntimeError as e:
                     print(f"Error running model {model} on GPU for row {r}: {e}")
