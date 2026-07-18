@@ -82,7 +82,7 @@ class Kernel_MRCD:
 
             # Determine rho for each estimator
             idx = sol.hsubset_indices
-            s = np.linalg.svd(utils.center(self.kernel.compute(x[idx], x[idx])), compute_uv=False)
+            s = np.linalg.svd(utils.center(K[np.ix_(idx, idx)]), compute_uv=False)
             nx = len(idx)
             e_min, e_max = s.min(), s.max()
 
@@ -108,14 +108,15 @@ class Kernel_MRCD:
             for iteration in range(1, self.c_step_iterations_allowed + 1):
                 print((f"Running C-step {iteration} for {sol.name} estimator"))
                 h_subset = sol.hsubset_indices
-                Kx = self.kernel.compute(x[h_subset], x[h_subset])
+                Kt = K[:, h_subset]
+                Kx = Kt[h_subset, :]
                 nx = Kx.shape[0]
-                Kt = self.kernel.compute(x, x[h_subset])
                 Kc = utils.center(Kx)
                 Kt_c = utils.center(Kx, Kt)
                 Kxx = Ktt_diag - (2 / nx) * Kt.sum(axis=1) + (1 / nx ** 2) * Kx.sum()
                 M = (1 - rho) * scfac * Kc + nx * rho * np.eye(nx)
-                smd = (1 / rho) * (Kxx - (1 - rho) * scfac * np.sum((Kt_c @ np.linalg.inv(M)) * Kt_c, axis=1))
+                Minv_Ktc = np.linalg.solve(M, Kt_c.T)
+                smd = (1 / rho) * (Kxx - (1 - rho) * scfac * np.sum(Kt_c * Minv_Ktc.T, axis=1))
                 new_hsubset = np.argsort(smd, kind="stable")[:nx]
                 sol.M = M
                 sol.Kc = Kc
