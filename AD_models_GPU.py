@@ -17,8 +17,6 @@ class RX():
         self.gamma = gamma
         self.reg = reg
         self.gpu = False
-        self._x_t_cache = None
-        self._k_tilde_cache = None
 
     def __call__(self, X, N):
         if self.kernel:
@@ -65,12 +63,7 @@ class RX():
         if type(self.kernel) is RbfKernel:
             self.kernel = AutoRbfKernel(x_t)
 
-        if self._x_t_cache is not None and self._x_t_cache.shape == x_t.shape and np.array_equal(self._x_t_cache, x_t):
-            K_tilde = self._k_tilde_cache
-        else:
-            K_tilde = self.kernel.compute(x_t, x_t)
-            self._x_t_cache = x_t
-            self._k_tilde_cache = K_tilde
+        K_tilde = self.kernel.compute(x_t, x_t)
         if self.cov is None:
             self.cov = (1 - self.reg) * K_tilde + (x_t.shape[0] - 1) * self.reg * np.eye(x_t.shape[0]) # (8) in the paper
         c, low = cho_factor(self.cov, lower=True, check_finite=False)
@@ -165,8 +158,6 @@ class RX():
 
     def set_kernel(self, kernel=None):
         self.kernel = kernel
-        self._x_t_cache = None
-        self._k_tilde_cache = None
 
 class AMF():
     def __init__(self, cov=None, mean_N=None, device=None, kernel=False, gamma=None, reg=1e-6, batch_size=2000):
@@ -178,9 +169,6 @@ class AMF():
         self.reg = reg
         self.batch_size = batch_size
         self.gpu = False
-        self._x_t_cache = None
-        self._k_tilde_cache = None
-        self._cho_cache = None
 
     def __call__(self, X, N, T):
         if self.kernel:
@@ -220,18 +208,10 @@ class AMF():
         if type(self.kernel) is RbfKernel:
             self.kernel = AutoRbfKernel(x_t)
 
-        if self._x_t_cache is not None and self._x_t_cache.shape == x_t.shape and np.array_equal(self._x_t_cache, x_t):
-            k_tilde = self._k_tilde_cache
-        else:
-            k_tilde = self.kernel.compute(x_t)
-            self._x_t_cache = x_t
-            self._k_tilde_cache = k_tilde
+        k_tilde = self.kernel.compute(x_t)
         if self.cov is None:
             self.cov = (1 - self.reg) * k_tilde + (x_t.shape[0] - 1) * self.reg * np.eye(x_t.shape[0]) # (8) in the paper
-            self._cho_cache = None
-        if self._cho_cache is None:
-            self._cho_cache = cho_factor(self.cov, lower=True, check_finite=False)
-        c, low = self._cho_cache
+        c, low = cho_factor(self.cov, lower=True, check_finite=False)
 
         t_x = self.kernel.compute(t_t, x_t)
         Kinv_tx = cho_solve((c, low), t_x.T, check_finite=False) # K_reg_inv @ t_x.T
@@ -261,9 +241,6 @@ class AMF():
 
     def set_kernel(self, kernel=None):
         self.kernel = kernel
-        self._x_t_cache = None
-        self._k_tilde_cache = None
-        self._cho_cache = None
 
     def load_config(self, config_dict):
         if config_dict.get('kernel') is not None:
@@ -331,7 +308,6 @@ class AMF():
 
     def set_cov(self, cov=None):
         self.cov = cov
-        self._cho_cache = None
 
     def set_device(self, device=None):
         self.device = device
@@ -346,10 +322,6 @@ class ACE():
         self.reg = reg
         self.batch_size = batch_size
         self.gpu = False
-        self._x_t_cache = None
-        self._k_tilde_cache = None
-        self._cho_cache = None
-        self._gxx_cache = None
 
     def __call__(self, X, N, T):
         if self.kernel:
@@ -385,19 +357,10 @@ class ACE():
         if type(self.kernel) is RbfKernel:
             self.kernel = AutoRbfKernel(x_t)
 
-        if self._x_t_cache is not None and self._x_t_cache.shape == x_t.shape and np.array_equal(self._x_t_cache, x_t):
-            k_tilde = self._k_tilde_cache
-        else:
-            k_tilde = self.kernel.compute(x_t, x_t)
-            self._x_t_cache = x_t
-            self._k_tilde_cache = k_tilde
+        k_tilde = self.kernel.compute(x_t, x_t)
         if self.cov is None:
             self.cov = (1 - self.reg) * k_tilde + (x_t.shape[0] - 1) * self.reg * np.eye(x_t.shape[0]) # (8) in the paper
-            self._cho_cache = None
-            self._gxx_cache = None
-        if self._cho_cache is None:
-            self._cho_cache = cho_factor(self.cov, lower=True, check_finite=False)
-        c, low = self._cho_cache
+        c, low = cho_factor(self.cov, lower=True, check_finite=False)
 
         t_x = self.kernel.compute(t_t, x_t)
         Kinv_tx = cho_solve((c, low), t_x.T, check_finite=False) # K_reg_inv @ t_x.T
@@ -406,12 +369,10 @@ class ACE():
         g_tx = (t_x.T - (1 - self.reg) * (k_tilde @ Kinv_tx)) / self.reg
         g_tx = g_tx[:, 0]
 
-        if self._gxx_cache is None:
-            kt_diag = np.diag(k_tilde)
-            Kinv_ktilde = cho_solve((c, low), k_tilde, check_finite=False) # K_reg_inv @ k_tilde
-            g_xx = kt_diag - (1 - self.reg) * np.sum(k_tilde * Kinv_ktilde, axis=0) # (9) in the paper
-            self._gxx_cache = g_xx / self.reg
-        g_xx = self._gxx_cache
+        kt_diag = np.diag(k_tilde)
+        Kinv_ktilde = cho_solve((c, low), k_tilde, check_finite=False) # K_reg_inv @ k_tilde
+        g_xx = kt_diag - (1 - self.reg) * np.sum(k_tilde * Kinv_ktilde, axis=0) # (9) in the paper
+        g_xx = g_xx / self.reg
 
         scores = g_tx ** 2 / (g_tt * g_xx)
         return scores.reshape(H, W)
@@ -435,10 +396,6 @@ class ACE():
 
     def set_kernel(self, kernel=None):
         self.kernel = kernel
-        self._x_t_cache = None
-        self._k_tilde_cache = None
-        self._cho_cache = None
-        self._gxx_cache = None
 
     def load_config(self, config_dict):
         if config_dict.get('kernel') is not None:
@@ -506,8 +463,6 @@ class ACE():
 
     def set_cov(self, cov=None):
         self.cov = cov
-        self._cho_cache = None
-        self._gxx_cache = None
 
     def set_device(self, device=None):
         self.device = device

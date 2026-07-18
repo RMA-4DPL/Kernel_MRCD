@@ -37,7 +37,7 @@ class RbfKernel:
         x2 = np.asarray(x2)
         if x1.shape[0] * x2.shape[0] >= 500_000:
             x1_sq = np.einsum("ij,ij->i", x1, x1)
-            x2_sq = np.einsum("ij,ij->i", x2, x2)
+            x2_sq = x1_sq if x2 is x1 else np.einsum("ij,ij->i", x2, x2)
             sqdist = x1_sq[:, None] + x2_sq[None, :] - 2 * x1 @ x2.T
             np.maximum(sqdist, 0, out=sqdist)
         else:

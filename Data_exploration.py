@@ -14,7 +14,7 @@ import scipy.io
 
 
 argument_parser = argparse.ArgumentParser(description='Data exploration for KMRCD')
-argument_parser.add_argument('--dataset', type=str, default='Salinas_A', help='Select which dataset to load (default:Salinas).')
+argument_parser.add_argument('--dataset', type=str, default='ABU_urban_4', help='Select which dataset to load (default:Salinas).')
 args = argument_parser.parse_args()
 
 np.random.seed(4)
