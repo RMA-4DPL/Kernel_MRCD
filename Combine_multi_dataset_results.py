@@ -7,9 +7,15 @@ import yaml
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from helper_functions import create_save_dir_name, load_dataset, normalize_data
+from helper_functions import create_save_dir_name, load_dataset, normalize_data, clip_and_normalize_data
 
 MAX_SCENE_COLS = 6
+DATASET_LIST = ['HYDICE', 'Salinas_A', 
+           'ABU_beach_3', 'ABU_airport_4', 'ABU_urban_3', 'ABU_beach_2', 'ABU_urban_1', 
+           'ABU_airport_1', 'ABU_airport_2', 'ABU_airport_3', 'ABU_urban_4', 'ABU_urban_5', 'ABU_urban_2', 
+           'ABU_beach_4', 'ABU_beach_1',
+           'Indiana', 'Salinas', 'WHU-HI', 'SanDiego', 'cooke_city', 'PaviaU']
+MODEL_LIST = ['sample' 'ledoit_wolf' 'shrinkage_0.1' 'diagonal_0.1' 'mrcd_auto_0.75_equicorrelation' 'kmrcd_0.75_rbf']
 
 base_filepath_configs = pathlib.Path(__file__).parent.resolve()
 base_filepath = "/mnt/userdata/MaMe/SSDdata/Kernel_MRCD"
@@ -19,7 +25,7 @@ argument_parser = argparse.ArgumentParser(
     description='Combine the classical (RX/AMF/ACE) model results and visualizations across multiple '
                 'datasets for one fixed scaler/scaling_scope setting (see Process_results.py and '
                 'Visualize_classical_results.py, which must have already been run for each dataset).')
-argument_parser.add_argument('--datasets', type=str, nargs='+', default=['Salinas'], help='Datasets to combine (default: auto-discover every dataset under the Results directory that has a summary for the given scaler/scaling_scope)')
+argument_parser.add_argument('--datasets', type=str, nargs='+', default=None, help='Datasets to combine (default: auto-discover every dataset under the Results directory that has a summary for the given scaler/scaling_scope)')
 argument_parser.add_argument('--models', type=str, nargs='+', default=None, help='Models to include (default: every model found across the selected datasets)')
 argument_parser.add_argument('--scaler', type=str, default='Standard', help='Scaler name (must match Process_results.py)')
 argument_parser.add_argument('--scaling_scope', type=str, default='per_sample', choices=['global', 'per_sample'], help='Scaling scope for the Scaler (must match Process_results.py)')
@@ -201,7 +207,7 @@ for dataset in datasets_found:
             continue
         with open(pickle_path, "rb") as f:
             x = pickle.load(f)
-        model_scores[model] = normalize_data(x["Scores"][0])
+        model_scores[model] = clip_and_normalize_data(x["Scores"][0])
         del x
 
     if not model_scores:
@@ -227,6 +233,8 @@ for dataset in datasets_found:
     fig, axes = plt.subplots(nrows, ncols, figsize=(4 * ncols, 4 * nrows), squeeze=False)
     for idx, (title, img, cmap) in enumerate(panels):
         ax = axes[idx // ncols, idx % ncols]
+        if img.shape[-1]==3:
+            img=img.squeeze()
         ax.imshow(img, cmap=cmap)
         ax.set_title(title, fontsize=8)
         ax.axis('off')

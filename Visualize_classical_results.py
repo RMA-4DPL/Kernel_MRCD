@@ -6,7 +6,7 @@ import yaml
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from helper_functions import create_save_dir_name, load_dataset, normalize_data
+from helper_functions import create_save_dir_name, load_dataset, normalize_data, clip_and_normalize_data
 
 base_filepath_configs = pathlib.Path(__file__).parent.resolve()
 base_filepath = "/mnt/userdata/MaMe/SSDdata/Kernel_MRCD"
@@ -135,7 +135,7 @@ def build_scene_and_histograms(models, score_key, raw_visual, label_array, label
             x = pickle.load(f)
         scores = x.get(score_key)
         if scores is not None:
-            model_scores[model] = normalize_data(scores[0])
+            model_scores[model] = clip_and_normalize_data(scores[0])
         del x
 
     if not model_scores:

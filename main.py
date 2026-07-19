@@ -39,7 +39,7 @@ if __name__ == "__main__":
     argument_parser.add_argument('--dataset', type=str, default='Salinas', help='Select which dataset to load (default:Salinas).')
     argument_parser.add_argument('--model', type=str, default='base_rx', required=False, help='Name of the model to process')   
     argument_parser.add_argument('--retrain', action='store_true', help='Retrain the model if specified')
-    argument_parser.set_defaults(retrain=True)
+    argument_parser.set_defaults(retrain=False)
     argument_parser.add_argument('--scaler', type=str, default='Standard', help='Scaler name (overrides experiment_settings Scaler)')
     argument_parser.add_argument('--scaling_scope', type=str, default='per_sample', choices=['global', 'per_sample'], help='Scaling scope for the Scaler (overrides experiment_settings Scaler scaling_scope)')
     argument_parser.add_argument('--background_model', type=str, default='MCD', help='Model to select background sample for statistics (default: Sample).')
@@ -164,18 +164,17 @@ if __name__ == "__main__":
                         scores[r] = row_scores
                         scores_binary[r] = scores[r]
                     else:
+                        label_full = label_array[r][::2,::2] if flag_subsample else label_array[r]
                         temp_scores = np.zeros((len(labels_ids)-1, H, W))
                         for i, id in enumerate(labels_ids):
-                            if id != 0:
-                                label = label_array[r][::2,::2]
-                                target = np.mean(row[np.where(label==id)], axis=0)
+                            if id != 0 and id != id_normal:
+                                target = np.mean(row[np.where(label_full==id)], axis=0)
                                 row_scores = AD_model(row, bg, target)
                                 if flag_subsample:
                                     row_scores = row_scores.repeat(2, axis=0).repeat(2, axis=1)[:H, :W]
                                 temp_scores[i-1] = row_scores
                         scores[r] = np.max(temp_scores, axis=0)
-                        label = label_array[r][::2,::2]
-                        target = np.mean(row[np.where(label!=0)], axis=0)
+                        target = np.mean(row[np.where((label_full!=0) & (label_full!=id_normal))], axis=0)
                         row_scores = AD_model(row, bg, target)
                         if flag_subsample:
                             row_scores = row_scores.repeat(2, axis=0).repeat(2, axis=1)[:H, :W]

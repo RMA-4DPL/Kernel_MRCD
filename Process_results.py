@@ -12,12 +12,12 @@ base_filepath_configs = pathlib.Path(__file__).parent.resolve()
 np.random.seed(4)
 
 argument_parser = argparse.ArgumentParser(description='Summarize classical AD model results (see LXR_test.py)')
-argument_parser.add_argument('--dataset', type=str, default='HYDICE', help='Select which dataset to load (default:Salinas).')
+argument_parser.add_argument('--dataset', type=str, default='Salinas', help='Select which dataset to load (default:Salinas).')
 argument_parser.add_argument('--recalculate', action='store_true', help='Recalculate metrics even if already present in Results_summary.xlsx')
 argument_parser.set_defaults(recalculate=False)
 argument_parser.add_argument('--scaler', type=str, default='Standard', help='Scaler name (overrides experiment_settings Scaler)')
 argument_parser.add_argument('--scaling_scope', type=str, default='per_sample', choices=['global', 'per_sample'], help='Scaling scope for the Scaler (overrides experiment_settings Scaler scaling_scope)')
-argument_parser.add_argument('--subsample', type=str, default='none', help='Subsampling method (must match main.py)')
+argument_parser.add_argument('--subsample', type=str, default='random', help='Subsampling method (must match main.py)')
 argument_parser.add_argument('--subsample_amount', type=int, default=1000, help='Amount of data points sampled (must match main.py)')
 args = argument_parser.parse_args()
 
@@ -261,7 +261,14 @@ for model in model_dirs:
 
         if not cached_binary:
             if scores_binary is None:
-                print(f"No binary scores found for model {model}; skipping binary metrics.")
+                print(f"No binary scores found for model {model}; copying regular scores instead.")
+                if cached_main:
+                    metric_per_sample, perc_correct_per_sample = compute_sample_metrics(
+                        scores, label_array, anomaly_labels, category_ids, metrics_to_calc, model)
+                for m in metrics_to_calc:
+                    metric_dict_binary[m][model] = metric_per_sample[m]
+                perc_correct_dict_binary[model] = perc_correct_per_sample
+                models_found_binary += 1
             else:
                 metric_per_sample_binary, perc_correct_per_sample_binary = compute_sample_metrics(
                     scores_binary, label_array, anomaly_labels, category_ids, metrics_to_calc, f"{model} (binary)")

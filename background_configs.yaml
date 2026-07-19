@@ -50,6 +50,12 @@ kmrcd_0.75_rbf:
   maxcond: 50.0
   max_steps: 10
   kernel: rbf
+kmrcd_0.9_rbf:
+  model_name: KMRCD
+  alpha: 0.9
+  maxcond: 50.0
+  max_steps: 10
+  kernel: rbf
 
 
 

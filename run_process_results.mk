@@ -14,7 +14,7 @@ DATASETS = HYDICE Salinas_A \
            ABU_beach_3 ABU_airport_4 ABU_urban_3 ABU_beach_2 ABU_urban_1 \
            ABU_airport_1 ABU_airport_2 ABU_airport_3 ABU_urban_4 ABU_urban_5 ABU_urban_2 \
            ABU_beach_4 ABU_beach_1 \
-           Indiana Salinas WHU-HI SanDiego cooke_city PaviaU #Pavia
+           Indiana Salinas WHU-HI SanDiego cooke_city PaviaU #Pavia 
 SUBSAMPLES = random #none
 SUBSAMPLE_AMOUNTS = 100 400 1000
 

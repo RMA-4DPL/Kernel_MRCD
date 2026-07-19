@@ -1,13 +1,13 @@
 # Makefile for training different models
 # Variables
 PYTHON=python
-RETRAIN=--retrain
+RETRAIN=#--retrain
 GPU=--gpu=3
 
 # All models defined in model_configs.yaml
-MODELS = base_amf \
-		 base_ace \
-		 # base_rx 
+MODELS = base_rx \
+         base_amf \
+		 base_ace
 
 # Sweep axes:
 #   subsample     -> none (no subsampling) or random (see subsampler.py), paired with subsample_amount
@@ -17,14 +17,14 @@ MODELS = base_amf \
 # (LXR_test.py has no train/test split, so no test_split_method axis here)
 SCALERS = Standard #none
 SCALING_SCOPES = per_sample
-BACKGROUND_CONFIGS = kmrcd_0.5_rbf kmrcd_0.75_rbf sample ledoit_wolf shrinkage_0.1 diagonal_0.1 mcd_0.5 mcd_0.75 mrcd_auto_0.5_identity mrcd_auto_0.75_identity mrcd_auto_0.75_equicorrelation kmrcd_0.5_rbf kmrcd_0.75_rbf 
-DATASETS = Salinas WHU-HI Indiana HYDICE Salinas_A \
+BACKGROUND_CONFIGS = sample ledoit_wolf shrinkage_0.1 diagonal_0.1 mrcd_auto_0.75_equicorrelation kmrcd_0.75_rbf
+DATASETS = Salinas #HYDICE Salinas_A \
            ABU_beach_3 ABU_airport_4 ABU_urban_3 ABU_beach_2 ABU_urban_1 \
            ABU_airport_1 ABU_airport_2 ABU_airport_3 ABU_urban_4 ABU_urban_5 ABU_urban_2 \
            ABU_beach_4 ABU_beach_1 \
-           SanDiego cooke_city PaviaU #Pavia 
+           Indiana PaviaU Salinas cooke_city SanDiego WHU-HI Pavia
 SUBSAMPLES = random
-SUBSAMPLE_AMOUNTS = 1000 400 100
+SUBSAMPLE_AMOUNTS = 10000 #400 1000
 
 # Default target
 all: train

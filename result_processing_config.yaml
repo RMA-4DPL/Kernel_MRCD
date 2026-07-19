@@ -1,5 +1,5 @@
 metrics:
   - AUC
-  # - AP
+  - AP
   # - FP
 

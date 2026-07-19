@@ -8,6 +8,27 @@ import torch.nn.functional as F
 import sys
 from kernels import RbfKernel, AutoRbfKernel
 
+def _safe_cho_factor(cov, lower=True):
+    """cho_factor with a diagonal-loading fallback for (near-)singular matrices.
+
+    Sample covariances built from few background points relative to the
+    dimensionality are rank-deficient (rank <= n_bg - 1), which makes LAPACK's
+    potrf fail outright. Retry with a small ridge added to the diagonal,
+    growing geometrically, until the factorization succeeds.
+    """
+    try:
+        return cho_factor(cov, lower=lower, check_finite=False)
+    except np.linalg.LinAlgError:
+        pass
+    n = cov.shape[0]
+    reg = np.finfo(cov.dtype).eps * max(np.trace(cov) / n, 1.0)
+    for _ in range(20):
+        try:
+            return cho_factor(cov + reg * np.eye(n, dtype=cov.dtype), lower=lower, check_finite=False)
+        except np.linalg.LinAlgError:
+            reg *= 10
+    raise np.linalg.LinAlgError("cho_factor: matrix remains non positive-definite after diagonal loading")
+
 class RX():
     def __init__(self, cov=None, mean_N=None, device=None, kernel=False, gamma=None, reg=0.1):
         self.cov = cov
@@ -67,7 +88,7 @@ class RX():
         K_bg = self.kernel.compute(N_t, N_t) # (n_bg, n_bg) background Gram matrix
         if self.cov is None:
             self.cov = (1 - self.reg) * K_bg + (N_t.shape[0] - 1) * self.reg * np.eye(N_t.shape[0]) # (8) in the paper
-        c, low = cho_factor(self.cov, lower=True, check_finite=False)
+        c, low = _safe_cho_factor(self.cov, lower=True)
         k_x = self.kernel.compute(x_t, N_t) # (n_test, n_bg) cross-kernel between test pixels and background
         solved = cho_solve((c, low), k_x.T, check_finite=False) # K_reg_inv @ k_x.T, (n_bg, n_test)
         kxx = self.kernel.diag(x_t) # k(x, x) per test pixel, O(n_test) instead of O(n_test^2)
@@ -172,7 +193,7 @@ class RX():
             cov = (N_t.T @ N_t) / (N_t.shape[0] - 1)
 
         x_t = x_t - mean_N
-        c, low = cho_factor(cov, lower=True, check_finite=False)
+        c, low = _safe_cho_factor(cov, lower=True)
         solved = cho_solve((c, low), x_t.T, check_finite=False).T
         return np.reshape(np.sum(x_t * solved, axis=1), (H, W))
 
@@ -252,7 +273,7 @@ class AMF():
             self.cov = (1 - self.reg) * k_tilde + (N_t.shape[0] - 1) * self.reg * np.eye(N_t.shape[0]) # (8) in the paper
             self._cho_cache = None
         if self._cho_cache is None:
-            self._cho_cache = cho_factor(self.cov, lower=True, check_finite=False)
+            self._cho_cache = _safe_cho_factor(self.cov, lower=True)
         c, low = self._cho_cache
 
         k_t = self.kernel.compute(t_t, N_t) # (1, n_bg) target-vs-background cross-kernel
@@ -260,8 +281,10 @@ class AMF():
         g_tt = (self.kernel.compute(t_t, t_t)[0, 0] - (1 - self.reg) * (k_t @ Kinv_kt)[0, 0]) / self.reg
 
         t_x = self.kernel.compute(t_t, x_t) # (1, n_test) raw direct kernel between target and each test pixel
-        k_x = self.kernel.compute(x_t, N_t) # (n_test, n_bg) test-pixel-vs-background cross-kernel
-        g_tx = (t_x.T - (1 - self.reg) * (k_x @ Kinv_kt)) / self.reg
+        k_x = self.kernel.compute(x_t, N_t)
+        Kinv_kx = cho_solve((c, low), k_x.T, check_finite=False)
+         # (n_test, n_bg) test-pixel-vs-background cross-kernel
+        g_tx = (t_x - (1 - self.reg) * (k_t @ Kinv_kx)) / self.reg
 
         scores = g_tx ** 2 / g_tt
         return scores.reshape(H, W)
@@ -380,7 +403,7 @@ class AMF():
 
         x_t = x_t - mean_N
         t_t = t_t - mean_N
-        c, low = cho_factor(cov, lower=True, check_finite=False)
+        c, low = _safe_cho_factor(cov, lower=True)
         solved_x = cho_solve((c, low), x_t.T, check_finite=False).T
         solved_t = cho_solve((c, low), t_t.T, check_finite=False).T
         numerator = np.sum(t_t * solved_x, axis=1) ** 2
@@ -459,7 +482,7 @@ class ACE():
             self._cho_cache = None
             self._gxx_cache = None
         if self._cho_cache is None:
-            self._cho_cache = cho_factor(self.cov, lower=True, check_finite=False)
+            self._cho_cache = _safe_cho_factor(self.cov, lower=True)
         c, low = self._cho_cache
 
         k_t = self.kernel.compute(t_t, N_t) # (1, n_bg) target-vs-background cross-kernel
@@ -605,7 +628,7 @@ class ACE():
 
         x_t = x_t - mean_N
         t_t = t_t - mean_N
-        c, low = cho_factor(cov, lower=True, check_finite=False)
+        c, low = _safe_cho_factor(cov, lower=True)
         solved_x = cho_solve((c, low), x_t.T, check_finite=False).T
         solved_t = cho_solve((c, low), t_t.T, check_finite=False).T
         numerator = np.sum(t_t * solved_x, axis=1) ** 2

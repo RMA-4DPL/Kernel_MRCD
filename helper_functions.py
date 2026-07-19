@@ -11,6 +11,10 @@ import spectral.io.erdas as erdas
 def normalize_data(X):
     return (X - np.min(X))/(np.max(X)- np.min(X))
 
+def clip_and_normalize_data(X, lower_percentile=0.5, upper_percentile=99.5):
+    lo, hi = np.percentile(X, [lower_percentile, upper_percentile])
+    return normalize_data(np.clip(X, lo, hi))
+
 def standardize_data(X):
     return (X - np.mean(X))/np.std(X)
 

@@ -17,14 +17,14 @@ MODELS = base_rx \
 # (LXR_test.py has no train/test split, so no test_split_method axis here)
 SCALERS = Standard #none
 SCALING_SCOPES = per_sample
-BACKGROUND_CONFIGS = sample ledoit_wolf shrinkage_0.1 diagonal_0.1 mcd_0.5 mcd_0.75 mrcd_auto_0.5_identity mrcd_auto_0.75_identity mrcd_auto_0.75_equicorrelation kmrcd_0.5_rbf kmrcd_0.75_rbf
-DATASETS = HYDICE Salinas_A \
+BACKGROUND_CONFIGS = sample ledoit_wolf shrinkage_0.1 diagonal_0.1 mrcd_auto_0.75_equicorrelation kmrcd_0.75_rbf
+DATASETS = Salinas #HYDICE Salinas_A \
            ABU_beach_3 ABU_airport_4 ABU_urban_3 ABU_beach_2 ABU_urban_1 \
            ABU_airport_1 ABU_airport_2 ABU_airport_3 ABU_urban_4 ABU_urban_5 ABU_urban_2 \
            ABU_beach_4 ABU_beach_1 \
            Indiana PaviaU Salinas cooke_city SanDiego WHU-HI Pavia
 SUBSAMPLES = random
-SUBSAMPLE_AMOUNTS = 1000 #400 1000
+SUBSAMPLE_AMOUNTS = 20000 #400 1000
 
 # Default target
 all: train
