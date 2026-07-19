@@ -106,7 +106,7 @@ class Kernel_MRCD:
         for sol in solutions:
             converged = False
             for iteration in range(1, self.c_step_iterations_allowed + 1):
-                print((f"Running C-step {iteration} for {sol.name} estimator"))
+                #print((f"Running C-step {iteration} for {sol.name} estimator"))
                 h_subset = sol.hsubset_indices
                 Kt = K[:, h_subset]
                 Kx = Kt[h_subset, :]
@@ -123,7 +123,7 @@ class Kernel_MRCD:
                 # Redefine the h-subset
                 sol.hsubset_indices = new_hsubset
                 if set(h_subset).issubset(set(new_hsubset)):
-                    print(f"Convergence at iteration {iteration}, {sol.name}")
+                    # print(f"Convergence at iteration {iteration}, {sol.name}")
                     sigma = np.linalg.svd(Kc, compute_uv=False)
                     sigma = (1 - rho) * scfac * sigma + len(new_hsubset) * rho
                     sol.obj = np.sum(np.log(sigma))
@@ -135,13 +135,13 @@ class Kernel_MRCD:
                 sigma = (1 - rho) * scfac * sigma + len(new_hsubset) * rho
                 sol.obj = np.sum(np.log(sigma))
                 sol.smd = smd
-                print(f"No convergence for {sol.name}")
+                # print(f"No convergence for {sol.name}")
             #assert converged, "no C-step convergence"
 
         # Select the solution with the lowest objective function ...
         solution = min(solutions, key=lambda s: s.obj)
         # ... the other solutions are simply discarded (not kept, unlike MATLAB's struct array).
-        print(f"-> Best estimator is {solution.name}")
+        # print(f"-> Best estimator is {solution.name}")
 
         solution.rho = rho
         solution.scfac = scfac

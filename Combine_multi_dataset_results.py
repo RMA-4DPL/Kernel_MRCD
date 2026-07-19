@@ -19,10 +19,11 @@ argument_parser = argparse.ArgumentParser(
     description='Combine the classical (RX/AMF/ACE) model results and visualizations across multiple '
                 'datasets for one fixed scaler/scaling_scope setting (see Process_results.py and '
                 'Visualize_classical_results.py, which must have already been run for each dataset).')
-argument_parser.add_argument('--datasets', type=str, nargs='+', default=None, help='Datasets to combine (default: auto-discover every dataset under the Results directory that has a summary for the given scaler/scaling_scope)')
+argument_parser.add_argument('--datasets', type=str, nargs='+', default=['Salinas'], help='Datasets to combine (default: auto-discover every dataset under the Results directory that has a summary for the given scaler/scaling_scope)')
+argument_parser.add_argument('--models', type=str, nargs='+', default=None, help='Models to include (default: every model found across the selected datasets)')
 argument_parser.add_argument('--scaler', type=str, default='Standard', help='Scaler name (must match Process_results.py)')
 argument_parser.add_argument('--scaling_scope', type=str, default='per_sample', choices=['global', 'per_sample'], help='Scaling scope for the Scaler (must match Process_results.py)')
-argument_parser.add_argument('--subsample', type=str, default='none', help='Subsampling method (must match Process_results.py/main.py)')
+argument_parser.add_argument('--subsample', type=str, default='random', help='Subsampling method (must match Process_results.py/main.py)')
 argument_parser.add_argument('--subsample_amount', type=int, default=1000, help='Amount of data points sampled (must match Process_results.py/main.py)')
 args = argument_parser.parse_args()
 
@@ -69,12 +70,25 @@ if args.subsample != 'none':
 os.makedirs(combined_save_dir, exist_ok=True)
 
 
+def select_models(available_models, requested_models):
+    if requested_models is None:
+        return available_models
+    missing = [m for m in requested_models if m not in available_models]
+    if missing:
+        print(f"Warning: requested models not found and will be skipped: {missing}")
+    return [m for m in requested_models if m in available_models]
+
+
 def parse_mean_std(series):
     means, stds = [], []
     for v in series:
-        mean_str, std_str = str(v).split('±')
-        means.append(float(mean_str))
-        stds.append(float(std_str))
+        try:
+            mean_str, std_str = str(v).split('±')
+            means.append(float(mean_str))
+            stds.append(float(std_str))
+        except:
+            means.append(float(str(v)))
+            stds.append(float(0.))
     return np.array(means), np.array(stds)
 
 
@@ -152,6 +166,7 @@ if not metrics_by_dataset:
 
 datasets_found = list(metrics_by_dataset.keys())
 models = sorted(set().union(*(df.index for df in metrics_by_dataset.values())))
+models = select_models(models, args.models)
 
 write_combined_summary(metrics_by_dataset, perc_by_dataset, datasets_found, models,
                         os.path.join(combined_save_dir, 'Combined_results_summary.xlsx'))
@@ -166,6 +181,7 @@ if not metrics_by_dataset_binary:
 else:
     datasets_found_binary = list(metrics_by_dataset_binary.keys())
     models_binary = sorted(set().union(*(df.index for df in metrics_by_dataset_binary.values())))
+    models_binary = select_models(models_binary, args.models)
     write_combined_summary(metrics_by_dataset_binary, perc_by_dataset_binary, datasets_found_binary, models_binary,
                             os.path.join(combined_save_dir, 'Combined_results_summary_binary.xlsx'))
     plot_combined_metrics(metrics_by_dataset_binary, datasets_found_binary, models_binary, " (binary)",
@@ -176,7 +192,7 @@ else:
 print("Building per-dataset scene visualizations")
 for dataset in datasets_found:
     save_dir = dataset_dirs[dataset]
-    models_present = list(metrics_by_dataset[dataset].index)
+    models_present = [m for m in metrics_by_dataset[dataset].index if m in models]
 
     model_scores = {}
     for model in models_present:

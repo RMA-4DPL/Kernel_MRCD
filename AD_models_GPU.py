@@ -9,7 +9,7 @@ import sys
 from kernels import RbfKernel, AutoRbfKernel
 
 class RX():
-    def __init__(self, cov=None, mean_N=None, device=None, kernel=False, gamma=None, reg=1e-6):
+    def __init__(self, cov=None, mean_N=None, device=None, kernel=False, gamma=None, reg=0.1):
         self.cov = cov
         self.mean_N = mean_N
         self.device = device
@@ -59,20 +59,49 @@ class RX():
         if self.mean_N is None:
             self.mean_N = np.mean(N_t, axis=0)
         x_t = x_t - self.mean_N
+        N_t = N_t - self.mean_N
 
         if type(self.kernel) is RbfKernel:
-            self.kernel = AutoRbfKernel(x_t)
+            self.kernel = AutoRbfKernel(N_t)
 
-        K_tilde = self.kernel.compute(x_t, x_t)
+        K_bg = self.kernel.compute(N_t, N_t) # (n_bg, n_bg) background Gram matrix
         if self.cov is None:
-            self.cov = (1 - self.reg) * K_tilde + (x_t.shape[0] - 1) * self.reg * np.eye(x_t.shape[0]) # (8) in the paper
+            self.cov = (1 - self.reg) * K_bg + (N_t.shape[0] - 1) * self.reg * np.eye(N_t.shape[0]) # (8) in the paper
         c, low = cho_factor(self.cov, lower=True, check_finite=False)
-        solved = cho_solve((c, low), K_tilde, check_finite=False) # K_reg_inv @ K_tilde
-        kt_diag = np.diag(K_tilde)
-        scores = kt_diag - (1 - self.reg) * np.sum(K_tilde * solved, axis=0) # (9) in the paper, diag(K_tilde @ K_reg_inv @ K_tilde) since both symmetric
+        k_x = self.kernel.compute(x_t, N_t) # (n_test, n_bg) cross-kernel between test pixels and background
+        solved = cho_solve((c, low), k_x.T, check_finite=False) # K_reg_inv @ k_x.T, (n_bg, n_test)
+        kxx = self.kernel.diag(x_t) # k(x, x) per test pixel, O(n_test) instead of O(n_test^2)
+        scores = kxx - (1 - self.reg) * np.sum(k_x.T * solved, axis=0) # (9) in the paper, diag(k_x @ K_reg_inv @ k_x.T)
         scores = scores/self.reg
 
         return scores.reshape(H, W)
+
+        # --- Previous implementation, kept for comparison ---------------------
+        #
+        # Built K_tilde as the Gram matrix of the *test* pixels X against
+        # themselves (an (n_test, n_test) matrix) instead of the background N,
+        # contradicting this method's own docstring/algorithm: every pixel was
+        # implicitly scored against a "background" made of the entire test
+        # image rather than the actual MCD-selected background set N (which
+        # was computed above only to get mean_N, then discarded). For large
+        # images this (n_test, n_test) Gram matrix is also why a subsampling
+        # fallback had to be bolted on in main.py for kernel mode. Fixed above
+        # to build the (n_bg, n_bg) Gram matrix from N, matching the paper.
+        #
+        # if type(self.kernel) is RbfKernel:
+        #     self.kernel = AutoRbfKernel(x_t)
+        #
+        # K_tilde = self.kernel.compute(x_t, x_t)
+        # if self.cov is None:
+        #     self.cov = (1 - self.reg) * K_tilde + (x_t.shape[0] - 1) * self.reg * np.eye(x_t.shape[0]) # (8) in the paper
+        # c, low = cho_factor(self.cov, lower=True, check_finite=False)
+        # solved = cho_solve((c, low), K_tilde, check_finite=False) # K_reg_inv @ K_tilde
+        # kt_diag = np.diag(K_tilde)
+        # scores = kt_diag - (1 - self.reg) * np.sum(K_tilde * solved, axis=0) # (9) in the paper, diag(K_tilde @ K_reg_inv @ K_tilde) since both symmetric
+        # scores = scores/self.reg
+        #
+        # return scores.reshape(H, W)
+        # ------------------------------------------------------------------------
 
     def _median_gamma(self, N_bg):
         # Median heuristic (matches kernels.py's AutoRbfKernel): bandwidth is
@@ -89,7 +118,7 @@ class RX():
     def get_gamma(self):
         return self.gamma
 
-    def set_reg(self, reg=1e-6):
+    def set_reg(self, reg=0.1):
         self.reg = reg
         self._kernel_bg = None
 
@@ -160,7 +189,7 @@ class RX():
         self.kernel = kernel
 
 class AMF():
-    def __init__(self, cov=None, mean_N=None, device=None, kernel=False, gamma=None, reg=1e-6, batch_size=2000):
+    def __init__(self, cov=None, mean_N=None, device=None, kernel=False, gamma=None, reg=0.1, batch_size=2000):
         self.cov = cov
         self.mean_N = mean_N
         self.device = device
@@ -169,6 +198,9 @@ class AMF():
         self.reg = reg
         self.batch_size = batch_size
         self.gpu = False
+        self._cache_key = None
+        self._k_tilde_cache = None
+        self._cho_cache = None
 
     def __call__(self, X, N, T):
         if self.kernel:
@@ -204,23 +236,72 @@ class AMF():
             self.mean_N = np.mean(N_t, axis=0)
         x_t = x_t - self.mean_N
         t_t = t_t - self.mean_N
+        N_t = N_t - self.mean_N
 
         if type(self.kernel) is RbfKernel:
-            self.kernel = AutoRbfKernel(x_t)
+            self.kernel = AutoRbfKernel(N_t)
 
-        k_tilde = self.kernel.compute(x_t)
+        cache_key = (id(N), id(self.mean_N)) # K_bg only depends on the background, not X or T
+        if self._cache_key == cache_key:
+            k_tilde = self._k_tilde_cache
+        else:
+            k_tilde = self.kernel.compute(N_t, N_t) # (n_bg, n_bg) background Gram matrix
+            self._cache_key = cache_key
+            self._k_tilde_cache = k_tilde
         if self.cov is None:
-            self.cov = (1 - self.reg) * k_tilde + (x_t.shape[0] - 1) * self.reg * np.eye(x_t.shape[0]) # (8) in the paper
-        c, low = cho_factor(self.cov, lower=True, check_finite=False)
+            self.cov = (1 - self.reg) * k_tilde + (N_t.shape[0] - 1) * self.reg * np.eye(N_t.shape[0]) # (8) in the paper
+            self._cho_cache = None
+        if self._cho_cache is None:
+            self._cho_cache = cho_factor(self.cov, lower=True, check_finite=False)
+        c, low = self._cho_cache
 
-        t_x = self.kernel.compute(t_t, x_t)
-        Kinv_tx = cho_solve((c, low), t_x.T, check_finite=False) # K_reg_inv @ t_x.T
-        g_tt = (self.kernel.compute(t_t, t_t)[0, 0] - (1 - self.reg) * (t_x @ Kinv_tx)[0, 0]) / self.reg
+        k_t = self.kernel.compute(t_t, N_t) # (1, n_bg) target-vs-background cross-kernel
+        Kinv_kt = cho_solve((c, low), k_t.T, check_finite=False) # K_reg_inv @ k_t.T
+        g_tt = (self.kernel.compute(t_t, t_t)[0, 0] - (1 - self.reg) * (k_t @ Kinv_kt)[0, 0]) / self.reg
 
-        g_tx = (t_x.T - (1 - self.reg) * (k_tilde @ Kinv_tx)) / self.reg
+        t_x = self.kernel.compute(t_t, x_t) # (1, n_test) raw direct kernel between target and each test pixel
+        k_x = self.kernel.compute(x_t, N_t) # (n_test, n_bg) test-pixel-vs-background cross-kernel
+        g_tx = (t_x.T - (1 - self.reg) * (k_x @ Kinv_kt)) / self.reg
 
         scores = g_tx ** 2 / g_tt
         return scores.reshape(H, W)
+
+        # --- Previous implementation, kept for comparison ---------------------
+        #
+        # Same bug as RX.run_kernel: k_tilde was the Gram matrix of the test
+        # pixels X (via self.kernel.compute(x_t), i.e. x_t against itself)
+        # rather than the background N, so every pixel was implicitly matched
+        # against the whole test image instead of the MCD-selected background.
+        # t_x here served double duty as both the raw K(t, x) term and (since
+        # "background" was X) the target-vs-background cross-kernel -- that
+        # conflation is why it had to be split into t_x and k_t above.
+        #
+        # if type(self.kernel) is RbfKernel:
+        #     self.kernel = AutoRbfKernel(x_t)
+        #
+        # cache_key = (id(X), id(N), id(self.mean_N))
+        # if self._cache_key == cache_key:
+        #     k_tilde = self._k_tilde_cache
+        # else:
+        #     k_tilde = self.kernel.compute(x_t)
+        #     self._cache_key = cache_key
+        #     self._k_tilde_cache = k_tilde
+        # if self.cov is None:
+        #     self.cov = (1 - self.reg) * k_tilde + (x_t.shape[0] - 1) * self.reg * np.eye(x_t.shape[0]) # (8) in the paper
+        #     self._cho_cache = None
+        # if self._cho_cache is None:
+        #     self._cho_cache = cho_factor(self.cov, lower=True, check_finite=False)
+        # c, low = self._cho_cache
+        #
+        # t_x = self.kernel.compute(t_t, x_t)
+        # Kinv_tx = cho_solve((c, low), t_x.T, check_finite=False) # K_reg_inv @ t_x.T
+        # g_tt = (self.kernel.compute(t_t, t_t)[0, 0] - (1 - self.reg) * (t_x @ Kinv_tx)[0, 0]) / self.reg
+        #
+        # g_tx = (t_x.T - (1 - self.reg) * (k_tilde @ Kinv_tx)) / self.reg
+        #
+        # scores = g_tx ** 2 / g_tt
+        # return scores.reshape(H, W)
+        # ------------------------------------------------------------------------
 
     def _median_gamma(self, N_bg):
         sqdist = pdist(N_bg, metric='sqeuclidean')
@@ -233,7 +314,7 @@ class AMF():
     def get_gamma(self):
         return self.gamma
 
-    def set_reg(self, reg=1e-6):
+    def set_reg(self, reg=0.1):
         self.reg = reg
 
     def get_reg(self):
@@ -241,6 +322,9 @@ class AMF():
 
     def set_kernel(self, kernel=None):
         self.kernel = kernel
+        self._cache_key = None
+        self._k_tilde_cache = None
+        self._cho_cache = None
 
     def load_config(self, config_dict):
         if config_dict.get('kernel') is not None:
@@ -308,12 +392,13 @@ class AMF():
 
     def set_cov(self, cov=None):
         self.cov = cov
+        self._cho_cache = None
 
     def set_device(self, device=None):
         self.device = device
 
 class ACE():
-    def __init__(self, cov=None, mean_N=None, device=None, kernel=False, gamma=None, reg=1e-6, batch_size=2000):
+    def __init__(self, cov=None, mean_N=None, device=None, kernel=False, gamma=None, reg=0.1, batch_size=2000):
         self.cov = cov
         self.mean_N = mean_N
         self.device = device
@@ -322,6 +407,10 @@ class ACE():
         self.reg = reg
         self.batch_size = batch_size
         self.gpu = False
+        self._cache_key = None
+        self._k_tilde_cache = None
+        self._cho_cache = None
+        self._gxx_cache = None
 
     def __call__(self, X, N, T):
         if self.kernel:
@@ -353,29 +442,90 @@ class ACE():
             self.mean_N = np.mean(N_t, axis=0)
         x_t = x_t - self.mean_N
         t_t = t_t - self.mean_N
+        N_t = N_t - self.mean_N
 
         if type(self.kernel) is RbfKernel:
-            self.kernel = AutoRbfKernel(x_t)
+            self.kernel = AutoRbfKernel(N_t)
 
-        k_tilde = self.kernel.compute(x_t, x_t)
+        cache_key = (id(N), id(self.mean_N)) # K_bg only depends on the background, not X or T
+        if self._cache_key == cache_key:
+            k_tilde = self._k_tilde_cache
+        else:
+            k_tilde = self.kernel.compute(N_t, N_t) # (n_bg, n_bg) background Gram matrix
+            self._cache_key = cache_key
+            self._k_tilde_cache = k_tilde
         if self.cov is None:
-            self.cov = (1 - self.reg) * k_tilde + (x_t.shape[0] - 1) * self.reg * np.eye(x_t.shape[0]) # (8) in the paper
-        c, low = cho_factor(self.cov, lower=True, check_finite=False)
+            self.cov = (1 - self.reg) * k_tilde + (N_t.shape[0] - 1) * self.reg * np.eye(N_t.shape[0]) # (8) in the paper
+            self._cho_cache = None
+            self._gxx_cache = None
+        if self._cho_cache is None:
+            self._cho_cache = cho_factor(self.cov, lower=True, check_finite=False)
+        c, low = self._cho_cache
 
-        t_x = self.kernel.compute(t_t, x_t)
-        Kinv_tx = cho_solve((c, low), t_x.T, check_finite=False) # K_reg_inv @ t_x.T
-        g_tt = (self.kernel.compute(t_t, t_t)[0, 0] - (1 - self.reg) * (t_x @ Kinv_tx)[0, 0]) / self.reg
+        k_t = self.kernel.compute(t_t, N_t) # (1, n_bg) target-vs-background cross-kernel
+        Kinv_kt = cho_solve((c, low), k_t.T, check_finite=False) # K_reg_inv @ k_t.T
+        g_tt = (self.kernel.compute(t_t, t_t)[0, 0] - (1 - self.reg) * (k_t @ Kinv_kt)[0, 0]) / self.reg
 
-        g_tx = (t_x.T - (1 - self.reg) * (k_tilde @ Kinv_tx)) / self.reg
+        t_x = self.kernel.compute(t_t, x_t) # (1, n_test) raw direct kernel between target and each test pixel
+        k_x = self.kernel.compute(x_t, N_t) # (n_test, n_bg) test-pixel-vs-background cross-kernel
+        g_tx = (t_x.T - (1 - self.reg) * (k_x @ Kinv_kt)) / self.reg
         g_tx = g_tx[:, 0]
 
-        kt_diag = np.diag(k_tilde)
-        Kinv_ktilde = cho_solve((c, low), k_tilde, check_finite=False) # K_reg_inv @ k_tilde
-        g_xx = kt_diag - (1 - self.reg) * np.sum(k_tilde * Kinv_ktilde, axis=0) # (9) in the paper
-        g_xx = g_xx / self.reg
+        if self._gxx_cache is None:
+            kxx = self.kernel.diag(x_t) # k(x, x) per test pixel, O(n_test) instead of O(n_test^2)
+            Kinv_kx = cho_solve((c, low), k_x.T, check_finite=False) # K_reg_inv @ k_x.T
+            g_xx = kxx - (1 - self.reg) * np.sum(k_x.T * Kinv_kx, axis=0) # (9) in the paper
+            self._gxx_cache = g_xx / self.reg
+        g_xx = self._gxx_cache
 
         scores = g_tx ** 2 / (g_tt * g_xx)
         return scores.reshape(H, W)
+
+        # --- Previous implementation, kept for comparison ---------------------
+        #
+        # Same bug as RX.run_kernel/AMF.run_kernel: k_tilde was the Gram
+        # matrix of the test pixels X against themselves rather than the
+        # background N, so g_xx (and g_tx via k_tilde) implicitly matched
+        # every pixel against the whole test image instead of the
+        # MCD-selected background. t_x served double duty as both the raw
+        # K(t, x) term and the target-vs-background cross-kernel; that
+        # conflation is why it's split into t_x and k_t above.
+        #
+        # if type(self.kernel) is RbfKernel:
+        #     self.kernel = AutoRbfKernel(x_t)
+        #
+        # cache_key = (id(X), id(N), id(self.mean_N))
+        # if self._cache_key == cache_key:
+        #     k_tilde = self._k_tilde_cache
+        # else:
+        #     k_tilde = self.kernel.compute(x_t, x_t)
+        #     self._cache_key = cache_key
+        #     self._k_tilde_cache = k_tilde
+        # if self.cov is None:
+        #     self.cov = (1 - self.reg) * k_tilde + (x_t.shape[0] - 1) * self.reg * np.eye(x_t.shape[0]) # (8) in the paper
+        #     self._cho_cache = None
+        #     self._gxx_cache = None
+        # if self._cho_cache is None:
+        #     self._cho_cache = cho_factor(self.cov, lower=True, check_finite=False)
+        # c, low = self._cho_cache
+        #
+        # t_x = self.kernel.compute(t_t, x_t)
+        # Kinv_tx = cho_solve((c, low), t_x.T, check_finite=False) # K_reg_inv @ t_x.T
+        # g_tt = (self.kernel.compute(t_t, t_t)[0, 0] - (1 - self.reg) * (t_x @ Kinv_tx)[0, 0]) / self.reg
+        #
+        # g_tx = (t_x.T - (1 - self.reg) * (k_tilde @ Kinv_tx)) / self.reg
+        # g_tx = g_tx[:, 0]
+        #
+        # if self._gxx_cache is None:
+        #     kt_diag = np.diag(k_tilde)
+        #     Kinv_ktilde = cho_solve((c, low), k_tilde, check_finite=False) # K_reg_inv @ k_tilde
+        #     g_xx = kt_diag - (1 - self.reg) * np.sum(k_tilde * Kinv_ktilde, axis=0) # (9) in the paper
+        #     self._gxx_cache = g_xx / self.reg
+        # g_xx = self._gxx_cache
+        #
+        # scores = g_tx ** 2 / (g_tt * g_xx)
+        # return scores.reshape(H, W)
+        # ------------------------------------------------------------------------
 
     def _median_gamma(self, N_bg):
         sqdist = pdist(N_bg, metric='sqeuclidean')
@@ -388,7 +538,7 @@ class ACE():
     def get_gamma(self):
         return self.gamma
 
-    def set_reg(self, reg=1e-6):
+    def set_reg(self, reg=0.1):
         self.reg = reg
 
     def get_reg(self):
@@ -396,6 +546,10 @@ class ACE():
 
     def set_kernel(self, kernel=None):
         self.kernel = kernel
+        self._cache_key = None
+        self._k_tilde_cache = None
+        self._cho_cache = None
+        self._gxx_cache = None
 
     def load_config(self, config_dict):
         if config_dict.get('kernel') is not None:
@@ -463,6 +617,8 @@ class ACE():
 
     def set_cov(self, cov=None):
         self.cov = cov
+        self._cho_cache = None
+        self._gxx_cache = None
 
     def set_device(self, device=None):
         self.device = device

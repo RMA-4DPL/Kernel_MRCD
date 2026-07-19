@@ -78,13 +78,19 @@ def summarize(metric_dict, perc_correct_dict, metrics_to_calc):
         metrics = np.zeros((len(metrics_to_calc),), dtype=object)
         for i, m in enumerate(metric_dict):
             temp = metric_dict[m][model]
-            metrics[i] = f"{np.nanmean(temp):.3f} ± {np.nanstd(temp):.3f}"
+            if len(temp)==1:
+                metrics[i] = f"{np.nanmean(temp):.3f}"
+            else:
+                metrics[i] = f"{np.nanmean(temp):.3f} ± {np.nanstd(temp):.3f}"
         metrics_summary[model] = metrics
 
         temp = perc_correct_dict[model]
         temp_mean = np.nanmean(temp, axis=0)
         temp_std = np.nanstd(temp, axis=0)
-        perc_summary[model] = [f"{temp_mean[i]:.3f} ± {temp_std[i]:.3f}" for i in range(len(temp_mean))]
+        if len(temp)==1:
+            perc_summary[model] = [f"{temp_mean[i]:.3f}" for i in range(len(temp_mean))] 
+        else:
+            perc_summary[model] = [f"{temp_mean[i]:.3f} ± {temp_std[i]:.3f}" for i in range(len(temp_mean))]
     return metrics_summary, perc_summary
 
 

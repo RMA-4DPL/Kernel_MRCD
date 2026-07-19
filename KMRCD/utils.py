@@ -113,7 +113,7 @@ def kernel_ogk(h_indices, K):
 
 
 def spatial_median_estimator(K, alpha):
-    print('Initializing Spatial median')
+    #print('Initializing Spatial median')
     K = np.asarray(K, dtype=float)
     assert K.shape[0] == K.shape[1]
     n = K.shape[0]
@@ -126,7 +126,7 @@ def spatial_median_estimator(K, alpha):
 
 
 def sscm(K):
-    print('Initializing SSCM')
+    #print('Initializing SSCM')
     K = np.asarray(K, dtype=float)
     assert K.shape[0] == K.shape[1]
     n = K.shape[0]
@@ -161,7 +161,7 @@ def sscm(K):
 
 
 def sdo(K, alpha, rng=None):
-    print('Initializing SDO')
+    #print('Initializing SDO')
     K = np.asarray(K, dtype=float)
     assert K.shape[0] == K.shape[1]
     n = K.shape[0]
@@ -184,7 +184,7 @@ def sdo(K, alpha, rng=None):
 
 
 def spatial_rank(K, alpha):
-    print('Initializing Spatial rank')
+    #print('Initializing Spatial rank')
     K = np.asarray(K, dtype=float)
     n = K.shape[0]
     diagK = np.diag(K)

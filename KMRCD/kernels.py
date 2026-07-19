@@ -23,6 +23,12 @@ class LinKernel:
         x2 = np.asarray(x2)
         return x1 @ x2.T
 
+    def diag(self, x1):
+        """K(x, x) per row of x1, i.e. diag(compute(x1, x1)) without forming
+        the full (n, n) Gram matrix."""
+        x1 = np.asarray(x1)
+        return np.einsum("ij,ij->i", x1, x1)
+
 
 class RbfKernel:
     """RBF Kernel: K(x, y) = exp(-||x - y||^2 / (2 * sigma^2))"""
@@ -43,6 +49,12 @@ class RbfKernel:
         else:
             sqdist = cdist(x1, x2, metric="sqeuclidean")
         return np.exp(-sqdist / (2 * self.sigma**2))
+
+    def diag(self, x1):
+        """K(x, x) per row of x1. ||x - x||^2 is always 0, so this is the
+        constant 1 regardless of x -- no distance computation needed."""
+        x1 = np.asarray(x1)
+        return np.ones(x1.shape[0], dtype=np.float64)
 
 
 class AutoRbfKernel(RbfKernel):
@@ -95,7 +107,7 @@ class AutoRbfKernel(RbfKernel):
         # The median is a bandwidth heuristic, not an exact quantity, so
         # instead of building the full O(n^2) distance matrix, estimate it
         # from a large random sample of point pairs (i != j).
-        rng = np.random.default_rng()
+        rng = np.random.default_rng(seed=4)
         m = min(self._MEDIAN_SAMPLE_SIZE, n * (n - 1) // 2)
         i = rng.integers(0, n, size=m, dtype=np.int32)
         j = rng.integers(0, n, size=m, dtype=np.int32)

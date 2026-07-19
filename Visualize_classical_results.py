@@ -61,9 +61,13 @@ models = list(metrics_df.index)
 def parse_mean_std(series):
     means, stds = [], []
     for v in series:
-        mean_str, std_str = str(v).split('±')
-        means.append(float(mean_str))
-        stds.append(float(std_str))
+        try:
+            mean_str, std_str = str(v).split('±')
+            means.append(float(mean_str))
+            stds.append(float(std_str))
+        except:
+            means.append(float(str(v)))
+            stds.append(float(0.))
     return np.array(means), np.array(stds)
 
 

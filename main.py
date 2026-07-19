@@ -36,17 +36,17 @@ if __name__ == "__main__":
     torch.use_deterministic_algorithms(True, warn_only=True)
 
     argument_parser = argparse.ArgumentParser(description='Process results of AD models')
-    argument_parser.add_argument('--dataset', type=str, default='Salinas_A', help='Select which dataset to load (default:Salinas).')
-    argument_parser.add_argument('--model', type=str, default='base_amf', required=False, help='Name of the model to process')   
+    argument_parser.add_argument('--dataset', type=str, default='Salinas', help='Select which dataset to load (default:Salinas).')
+    argument_parser.add_argument('--model', type=str, default='base_rx', required=False, help='Name of the model to process')   
     argument_parser.add_argument('--retrain', action='store_true', help='Retrain the model if specified')
-    argument_parser.set_defaults(retrain=False)
+    argument_parser.set_defaults(retrain=True)
     argument_parser.add_argument('--scaler', type=str, default='Standard', help='Scaler name (overrides experiment_settings Scaler)')
     argument_parser.add_argument('--scaling_scope', type=str, default='per_sample', choices=['global', 'per_sample'], help='Scaling scope for the Scaler (overrides experiment_settings Scaler scaling_scope)')
     argument_parser.add_argument('--background_model', type=str, default='MCD', help='Model to select background sample for statistics (default: Sample).')
     argument_parser.add_argument('--background_config', type=str, default='kmrcd_0.75_rbf', help='Name of the entry in background_configs.yaml to load parameters from (overrides --background_model with its model_name).')
     argument_parser.add_argument('--gpu', type=int, default=3, help='GPU device number to use (default: 0)')
     argument_parser.add_argument('--subsample', type=str, default='random', help='method to use for data subsampling.')
-    argument_parser.add_argument('--subsample_amount', type=int, default=100, help='amount of data point to sample')
+    argument_parser.add_argument('--subsample_amount', type=int, default=1000, help='amount of data point to sample')
     args = argument_parser.parse_args()
 
     # CUDA for PyTorch
@@ -131,7 +131,8 @@ if __name__ == "__main__":
             AD_model.set_device(device)
         for r, row in tqdm(enumerate(data_array), total=len(data_array)):
             flag_subsample = False
-            if row.shape[0] * row.shape[1]>120000 and 'kernel' in background_config:
+            if (row.shape[0] * row.shape[1]>80000 and 'kernel' in background_config
+                    and experiment_settings['Subsample']['name'] == 'none'):
                 row = row[::2,::2]
                 flag_subsample = True
             start_time = time.time()
@@ -166,13 +167,15 @@ if __name__ == "__main__":
                         temp_scores = np.zeros((len(labels_ids)-1, H, W))
                         for i, id in enumerate(labels_ids):
                             if id != 0:
-                                target = np.mean(row[np.where(label_array[r]==id)], axis=0)
+                                label = label_array[r][::2,::2]
+                                target = np.mean(row[np.where(label==id)], axis=0)
                                 row_scores = AD_model(row, bg, target)
                                 if flag_subsample:
                                     row_scores = row_scores.repeat(2, axis=0).repeat(2, axis=1)[:H, :W]
                                 temp_scores[i-1] = row_scores
                         scores[r] = np.max(temp_scores, axis=0)
-                        target = np.mean(row[np.where(label_array[r]!=0)], axis=0)
+                        label = label_array[r][::2,::2]
+                        target = np.mean(row[np.where(label!=0)], axis=0)
                         row_scores = AD_model(row, bg, target)
                         if flag_subsample:
                             row_scores = row_scores.repeat(2, axis=0).repeat(2, axis=1)[:H, :W]
