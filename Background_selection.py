@@ -33,6 +33,19 @@ def _ogk_pairwise_covariance(row, column):
         - qn_scale(data[:, column] - data[:, row]) ** 2
     ) / 4.0
 
+# Same fork+globals pattern as _ogk_worker_data/_ogk_init_worker above, used to
+# parallelize the per-column qn_scale loop in MRCD._initset across all starts.
+_initset_worker_data = None
+
+
+def _initset_init_worker(data):
+    global _initset_worker_data
+    _initset_worker_data = data
+
+
+def _initset_column_qn_scale(column):
+    return qn_scale(_initset_worker_data[:, column])
+
 def sample_covariance(N):
     N_t = N.reshape(-1, N.shape[-1])
     mean_N = np.mean(N_t, axis=0)
@@ -421,9 +434,11 @@ class MRCD():
             matrix[row, column] = covariance
         return self._eigenvectors(matrix)
     
-    def _initset(self,data, eigenvectors, h):
+    def _initset(self, data, eigenvectors, h, scales=None):
         projected = data @ eigenvectors
-        scales = np.maximum(np.array([qn_scale(projected[:, column]) for column in range(projected.shape[1])]), 1e-12)
+        if scales is None:
+            scales = np.array([qn_scale(projected[:, column]) for column in range(projected.shape[1])])
+        scales = np.maximum(scales, 1e-12)
         square_root_covariance = (eigenvectors * scales) @ eigenvectors.T
         inverse_square_root_covariance = (eigenvectors / scales) @ eigenvectors.T
         location = np.median(data @ inverse_square_root_covariance, axis=0) @ square_root_covariance
@@ -441,8 +456,13 @@ class MRCD():
         spatial_sign[nonzero] /= spatial_norm[nonzero, None]
 
         tanh_vectors = self._eigenvectors(np.corrcoef(np.tanh(scaled), rowvar=False))
-        spearman_vectors = self._eigenvectors(np.corrcoef(np.apply_along_axis(rankdata, 0, scaled), rowvar=False))
-        normal_scores = ndtri(np.apply_along_axis(rankdata, 0, scaled) - 1.0 / 3.0) / (samples + 1.0 / 3.0)
+        # spearman_vectors = self._eigenvectors(np.corrcoef(np.apply_along_axis(rankdata, 0, scaled), rowvar=False))
+        # normal_scores = ndtri(np.apply_along_axis(rankdata, 0, scaled) - 1.0 / 3.0) / (samples + 1.0 / 3.0)
+        # ranks were computed separately for spearman_vectors and normal_scores;
+        # both use the identical rankdata(scaled) result, so compute it once.
+        ranks = np.apply_along_axis(rankdata, 0, scaled)
+        spearman_vectors = self._eigenvectors(np.corrcoef(ranks, rowvar=False))
+        normal_scores = ndtri(ranks - 1.0 / 3.0) / (samples + 1.0 / 3.0)
         score_vectors = self._eigenvectors(np.corrcoef(normal_scores, rowvar=False))
         spatial_vectors = self._eigenvectors(spatial_sign.T @ spatial_sign)
         half = int(np.ceil(samples / 2.0))
@@ -451,7 +471,24 @@ class MRCD():
         ogk_vectors = self._ogk_eigenvectors(scaled)
 
         starts = [tanh_vectors, spearman_vectors, score_vectors, spatial_vectors, bacon_vectors, ogk_vectors]
-        return np.column_stack([self._initset(scaled, eigenvectors, h) for eigenvectors in starts])
+
+        # return np.column_stack([self._initset(scaled, eigenvectors, h) for eigenvectors in starts])
+        # _initset's per-column qn_scale loop was serial and run once per start
+        # (~9s total for d~150); batch all 6*dimensions columns into a single
+        # fork-based process pool instead, mirroring _ogk_eigenvectors above.
+        projections = [scaled @ eigenvectors for eigenvectors in starts]
+        stacked = np.hstack(projections)
+        ctx = mp.get_context("fork")
+        with ProcessPoolExecutor(
+            max_workers=20, mp_context=ctx, initializer=_initset_init_worker, initargs=(stacked,)
+        ) as executor:
+            flat_scales = np.array(list(executor.map(_initset_column_qn_scale, range(stacked.shape[1]))))
+        scales_per_start = flat_scales.reshape(len(starts), dimensions)
+
+        return np.column_stack([
+            self._initset(scaled, eigenvectors, h, scales=scales_per_start[i])
+            for i, eigenvectors in enumerate(starts)
+        ])
 
     def _rho_for_subset(self,centered_subset, consistency_factor):
         eigenvalues = np.linalg.eigvalsh(consistency_factor * (centered_subset.T @ centered_subset) / (centered_subset.shape[0] - 1))
@@ -571,7 +608,10 @@ class MRCD():
         self.center = scales * working_center + median
         self.fitted_target = (scales[:, None] * working_target) * scales[None, :]
         self.residuals = X_t - self.center
-        self.distances = np.einsum("ij,jk,ik->i", self.residuals, self.precision, self.residuals)
+        # self.distances = np.einsum("ij,jk,ik->i", self.residuals, self.precision, self.residuals)
+        # Default einsum doesn't route a 3-operand contraction through BLAS;
+        # splitting into an explicit matmul + row-wise dot is ~6x faster.
+        self.distances = np.sum((self.residuals @ self.precision) * self.residuals, axis=1)
 
         return self.center, self.covariance
 
@@ -584,7 +624,8 @@ class MRCD():
             center = np.mean(subset, axis=0)
             covariance, precision = self.inverse_regularized_covariance(subset - center, np.eye(data.shape[1]), consistency_factor)
             residuals = data - center
-            distances = np.einsum("ij,jk,ik->i", residuals, precision, residuals)
+            # distances = np.einsum("ij,jk,ik->i", residuals, precision, residuals)
+            distances = np.sum((residuals @ precision) * residuals, axis=1)
             updated = np.sort(np.argsort(distances)[:h])
             if np.array_equal(updated, indices) or iteration == self.max_steps:
                 return indices, center, covariance, precision, iteration
