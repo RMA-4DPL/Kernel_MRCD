@@ -29,6 +29,28 @@ def _safe_cho_factor(cov, lower=True):
             reg *= 10
     raise np.linalg.LinAlgError("cho_factor: matrix remains non positive-definite after diagonal loading")
 
+def _safe_cholesky_torch(cov):
+    """torch.linalg.cholesky with the same diagonal-loading fallback as
+    _safe_cho_factor, for (near-)singular background covariances."""
+    try:
+        return torch.linalg.cholesky(cov)
+    except torch._C._LinAlgError:
+        pass
+    n = cov.shape[0]
+    eye = torch.eye(n, dtype=cov.dtype, device=cov.device)
+    reg = torch.finfo(cov.dtype).eps * max((torch.trace(cov) / n).item(), 1.0)
+    for _ in range(20):
+        try:
+            return torch.linalg.cholesky(cov + reg * eye)
+        except torch._C._LinAlgError:
+            reg *= 10
+    raise torch._C._LinAlgError("cholesky: matrix remains non positive-definite after diagonal loading")
+
+def _rbf_kernel_torch(x1, x2, sigma):
+    """RBF Gram matrix computed on-device, matching kernels.RbfKernel.compute."""
+    sqdist = torch.cdist(x1, x2, p=2) ** 2
+    return torch.exp(-sqdist / (2 * sigma**2))
+
 class RX():
     def __init__(self, cov=None, mean_N=None, device=None, kernel=False, gamma=None, reg=0.1):
         self.cov = cov
@@ -40,7 +62,9 @@ class RX():
         self.gpu = False
 
     def __call__(self, X, N):
-        if self.kernel:
+        if self.kernel and self.gpu:
+            return self.run_kernel_gpu(X, N)
+        elif self.kernel:
             return self.run_kernel(X, N)
         elif self.gpu:
             return self.run_gpu(X, N)
@@ -123,6 +147,53 @@ class RX():
         #
         # return scores.reshape(H, W)
         # ------------------------------------------------------------------------
+
+    def run_kernel_gpu(self, X, N):
+        """
+        Torch/GPU version of run_kernel. Same algorithm (see run_kernel's
+        docstring), but the Gram matrices and the K_reg solve are computed
+        with torch tensors on self.device instead of scipy/LAPACK on the CPU.
+
+        The AutoRbfKernel bandwidth is still fit on the CPU via numpy (a
+        cheap O(sample size) operation, done once and cached on self.kernel),
+        so this produces the exact same sigma as run_kernel. Kernel Gram
+        matrices are computed in float64 to match scipy.spatial.distance.cdist's
+        precision (it always computes in double regardless of input dtype),
+        which keeps results numerically identical to run_kernel to solver
+        tolerance rather than just "close" at float32 precision.
+        """
+        H, W, B = X.shape
+        x_np = np.ascontiguousarray(X.reshape(-1, B), dtype=np.float32)
+        N_np = np.ascontiguousarray(N.reshape(-1, B), dtype=np.float32)
+        if self.mean_N is None:
+            self.mean_N = np.mean(N_np, axis=0)
+        x_np = x_np - self.mean_N
+        N_np = N_np - self.mean_N
+
+        if type(self.kernel) is RbfKernel:
+            self.kernel = AutoRbfKernel(N_np)
+
+        with torch.no_grad():
+            x_t = torch.from_numpy(x_np).double().to(self.device)
+            N_t = torch.from_numpy(N_np).double().to(self.device)
+            sigma = float(self.kernel.sigma)
+
+            K_bg = _rbf_kernel_torch(N_t, N_t, sigma) # (n_bg, n_bg) background Gram matrix
+            if self.cov is None:
+                n_bg = N_t.shape[0]
+                eye = torch.eye(n_bg, dtype=torch.float64, device=self.device)
+                cov_t = (1 - self.reg) * K_bg + (n_bg - 1) * self.reg * eye # (8) in the paper
+                self.cov = cov_t.cpu().numpy()
+            else:
+                cov_t = torch.from_numpy(self.cov).to(self.device)
+            L = _safe_cholesky_torch(cov_t)
+            k_x = _rbf_kernel_torch(x_t, N_t, sigma) # (n_test, n_bg) cross-kernel between test pixels and background
+            solved = torch.cholesky_solve(k_x.T, L) # K_reg_inv @ k_x.T, (n_bg, n_test)
+            kxx = torch.from_numpy(self.kernel.diag(x_np)).to(self.device) # k(x, x) per test pixel
+            scores = kxx - (1 - self.reg) * torch.sum(k_x.T * solved, dim=0) # (9) in the paper
+            scores = scores / self.reg
+
+        return scores.reshape(H, W).detach().cpu().numpy()
 
     def _median_gamma(self, N_bg):
         # Median heuristic (matches kernels.py's AutoRbfKernel): bandwidth is
@@ -222,9 +293,14 @@ class AMF():
         self._cache_key = None
         self._k_tilde_cache = None
         self._cho_cache = None
+        self._cache_key_gpu = None
+        self._k_tilde_cache_gpu = None
+        self._cho_cache_gpu = None
 
     def __call__(self, X, N, T):
-        if self.kernel:
+        if self.kernel and self.gpu:
+            return self.run_kernel_gpu(X, N, T)
+        elif self.kernel:
             return self.run_kernel(X, N, T)
         elif self.gpu:
             return self.run_gpu(X, N, T)
@@ -326,6 +402,59 @@ class AMF():
         # return scores.reshape(H, W)
         # ------------------------------------------------------------------------
 
+    def run_kernel_gpu(self, X, N, T):
+        """Torch/GPU version of run_kernel; see its docstring for the algorithm."""
+        H, W, B = X.shape
+        x_np = np.ascontiguousarray(X.reshape(-1, B), dtype=np.float32)
+        t_np = np.ascontiguousarray(T.reshape(-1, B), dtype=np.float32)
+        N_np = np.ascontiguousarray(N.reshape(-1, B), dtype=np.float32)
+        if self.mean_N is None:
+            self.mean_N = np.mean(N_np, axis=0)
+        x_np = x_np - self.mean_N
+        t_np = t_np - self.mean_N
+        N_np = N_np - self.mean_N
+
+        if type(self.kernel) is RbfKernel:
+            self.kernel = AutoRbfKernel(N_np)
+        sigma = float(self.kernel.sigma)
+
+        with torch.no_grad():
+            x_t = torch.from_numpy(x_np).double().to(self.device)
+            t_t = torch.from_numpy(t_np).double().to(self.device)
+            N_t = torch.from_numpy(N_np).double().to(self.device)
+
+            cache_key = (id(N), id(self.mean_N)) # K_bg only depends on the background, not X or T
+            if self._cache_key_gpu == cache_key:
+                k_tilde = self._k_tilde_cache_gpu
+            else:
+                k_tilde = _rbf_kernel_torch(N_t, N_t, sigma) # (n_bg, n_bg) background Gram matrix
+                self._cache_key_gpu = cache_key
+                self._k_tilde_cache_gpu = k_tilde
+            if self.cov is None:
+                n_bg = N_t.shape[0]
+                eye = torch.eye(n_bg, dtype=torch.float64, device=self.device)
+                cov_t = (1 - self.reg) * k_tilde + (n_bg - 1) * self.reg * eye # (8) in the paper
+                self.cov = cov_t.cpu().numpy()
+                self._cho_cache_gpu = None
+            else:
+                cov_t = torch.from_numpy(self.cov).to(self.device)
+            if self._cho_cache_gpu is None:
+                self._cho_cache_gpu = _safe_cholesky_torch(cov_t)
+            L = self._cho_cache_gpu
+
+            k_t = _rbf_kernel_torch(t_t, N_t, sigma) # (1, n_bg) target-vs-background cross-kernel
+            Kinv_kt = torch.cholesky_solve(k_t.T, L) # K_reg_inv @ k_t.T
+            g_tt = (_rbf_kernel_torch(t_t, t_t, sigma)[0, 0] - (1 - self.reg) * (k_t @ Kinv_kt)[0, 0]) / self.reg
+
+            t_x = _rbf_kernel_torch(t_t, x_t, sigma) # (1, n_test) raw direct kernel between target and each test pixel
+            k_x = _rbf_kernel_torch(x_t, N_t, sigma)
+            Kinv_kx = torch.cholesky_solve(k_x.T, L)
+            # (n_test, n_bg) test-pixel-vs-background cross-kernel
+            g_tx = (t_x - (1 - self.reg) * (k_t @ Kinv_kx)) / self.reg
+
+            scores = g_tx ** 2 / g_tt
+        return scores.reshape(H, W).detach().cpu().numpy()
+
     def _median_gamma(self, N_bg):
         sqdist = pdist(N_bg, metric='sqeuclidean')
         med = max(np.median(sqdist), 1e-12)
@@ -348,6 +477,9 @@ class AMF():
         self._cache_key = None
         self._k_tilde_cache = None
         self._cho_cache = None
+        self._cache_key_gpu = None
+        self._k_tilde_cache_gpu = None
+        self._cho_cache_gpu = None
 
     def load_config(self, config_dict):
         if config_dict.get('kernel') is not None:
@@ -416,6 +548,7 @@ class AMF():
     def set_cov(self, cov=None):
         self.cov = cov
         self._cho_cache = None
+        self._cho_cache_gpu = None
 
     def set_device(self, device=None):
         self.device = device
@@ -434,9 +567,15 @@ class ACE():
         self._k_tilde_cache = None
         self._cho_cache = None
         self._gxx_cache = None
+        self._cache_key_gpu = None
+        self._k_tilde_cache_gpu = None
+        self._cho_cache_gpu = None
+        self._gxx_cache_gpu = None
 
     def __call__(self, X, N, T):
-        if self.kernel:
+        if self.kernel and self.gpu:
+            return self.run_kernel_gpu(X, N, T)
+        elif self.kernel:
             return self.run_kernel(X, N, T)
         elif self.gpu:
             return self.run_gpu(X, N, T)
@@ -550,6 +689,66 @@ class ACE():
         # return scores.reshape(H, W)
         # ------------------------------------------------------------------------
 
+    def run_kernel_gpu(self, X, N, T):
+        """Torch/GPU version of run_kernel; see its docstring for the algorithm."""
+        H, W, B = X.shape
+        x_np = np.ascontiguousarray(X.reshape(-1, B), dtype=np.float32)
+        t_np = np.ascontiguousarray(T.reshape(-1, B), dtype=np.float32)
+        N_np = np.ascontiguousarray(N.reshape(-1, B), dtype=np.float32)
+        if self.mean_N is None:
+            self.mean_N = np.mean(N_np, axis=0)
+        x_np = x_np - self.mean_N
+        t_np = t_np - self.mean_N
+        N_np = N_np - self.mean_N
+
+        if type(self.kernel) is RbfKernel:
+            self.kernel = AutoRbfKernel(N_np)
+        sigma = float(self.kernel.sigma)
+
+        with torch.no_grad():
+            x_t = torch.from_numpy(x_np).double().to(self.device)
+            t_t = torch.from_numpy(t_np).double().to(self.device)
+            N_t = torch.from_numpy(N_np).double().to(self.device)
+
+            cache_key = (id(N), id(self.mean_N)) # K_bg only depends on the background, not X or T
+            if self._cache_key_gpu == cache_key:
+                k_tilde = self._k_tilde_cache_gpu
+            else:
+                k_tilde = _rbf_kernel_torch(N_t, N_t, sigma) # (n_bg, n_bg) background Gram matrix
+                self._cache_key_gpu = cache_key
+                self._k_tilde_cache_gpu = k_tilde
+            if self.cov is None:
+                n_bg = N_t.shape[0]
+                eye = torch.eye(n_bg, dtype=torch.float64, device=self.device)
+                cov_t = (1 - self.reg) * k_tilde + (n_bg - 1) * self.reg * eye # (8) in the paper
+                self.cov = cov_t.cpu().numpy()
+                self._cho_cache_gpu = None
+                self._gxx_cache_gpu = None
+            else:
+                cov_t = torch.from_numpy(self.cov).to(self.device)
+            if self._cho_cache_gpu is None:
+                self._cho_cache_gpu = _safe_cholesky_torch(cov_t)
+            L = self._cho_cache_gpu
+
+            k_t = _rbf_kernel_torch(t_t, N_t, sigma) # (1, n_bg) target-vs-background cross-kernel
+            Kinv_kt = torch.cholesky_solve(k_t.T, L) # K_reg_inv @ k_t.T
+            g_tt = (_rbf_kernel_torch(t_t, t_t, sigma)[0, 0] - (1 - self.reg) * (k_t @ Kinv_kt)[0, 0]) / self.reg
+
+            t_x = _rbf_kernel_torch(t_t, x_t, sigma) # (1, n_test) raw direct kernel between target and each test pixel
+            k_x = _rbf_kernel_torch(x_t, N_t, sigma) # (n_test, n_bg) test-pixel-vs-background cross-kernel
+            g_tx = (t_x.T - (1 - self.reg) * (k_x @ Kinv_kt)) / self.reg
+            g_tx = g_tx[:, 0]
+
+            if self._gxx_cache_gpu is None:
+                kxx = torch.from_numpy(self.kernel.diag(x_np)).to(self.device) # k(x, x) per test pixel
+                Kinv_kx = torch.cholesky_solve(k_x.T, L) # K_reg_inv @ k_x.T
+                g_xx = kxx - (1 - self.reg) * torch.sum(k_x.T * Kinv_kx, dim=0) # (9) in the paper
+                self._gxx_cache_gpu = g_xx / self.reg
+            g_xx = self._gxx_cache_gpu
+
+            scores = g_tx ** 2 / (g_tt * g_xx)
+        return scores.reshape(H, W).detach().cpu().numpy()
+
     def _median_gamma(self, N_bg):
         sqdist = pdist(N_bg, metric='sqeuclidean')
         med = max(np.median(sqdist), 1e-12)
@@ -573,6 +772,10 @@ class ACE():
         self._k_tilde_cache = None
         self._cho_cache = None
         self._gxx_cache = None
+        self._cache_key_gpu = None
+        self._k_tilde_cache_gpu = None
+        self._cho_cache_gpu = None
+        self._gxx_cache_gpu = None
 
     def load_config(self, config_dict):
         if config_dict.get('kernel') is not None:
@@ -642,6 +845,8 @@ class ACE():
         self.cov = cov
         self._cho_cache = None
         self._gxx_cache = None
+        self._cho_cache_gpu = None
+        self._gxx_cache_gpu = None
 
     def set_device(self, device=None):
         self.device = device
