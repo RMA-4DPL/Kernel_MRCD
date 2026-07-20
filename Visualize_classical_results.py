@@ -226,10 +226,8 @@ else:
 # Salinas is a single scene (see LXR_test.py/load_salinas), so there is one visual composite
 # per run rather than a random gallery of samples.
 print("Building scene visualization")
-raw_data, data_array, label_array, label_ids = load_dataset(base_path=base_filepath, dataset_name=args.dataset)
+raw_data, data_array, label_array, label_ids, wavelengths = load_dataset(base_path=base_filepath, dataset_name=args.dataset)
 
-n_bands = raw_data.shape[-1]
-wavelengths = np.linspace(400, 2500, n_bands)
 bgr_targets = [495, 555, 760]  # approximate blue/green/red wavelengths (nm)
 b_idx, g_idx, r_idx = [np.argmin(np.abs(wavelengths - t)) for t in bgr_targets]
 visual = np.stack([

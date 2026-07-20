@@ -23,7 +23,7 @@ base_filepath = "/mnt/userdata/MaMe/SSDdata/Kernel_MRCD"
 dataset_filepath = os.path.join(base_filepath, 'Dataset', args.dataset)
 figure_filepath = os.path.join(base_filepath, 'Figures')
 
-data, corrected_data, labels, labels_ids = load_dataset(base_path=base_filepath, dataset_name=args.dataset)
+data, corrected_data, labels, labels_ids, wavelengths = load_dataset(base_path=base_filepath, dataset_name=args.dataset)
 if len(data.shape)>3:
     data = data.squeeze()
 if len(corrected_data.shape)>3:
@@ -31,13 +31,11 @@ if len(corrected_data.shape)>3:
 if len(labels.shape)>2:
     labels=labels.squeeze()
 
-wavelengths = np.linspace(400, 2500, data.shape[-1])
-
 BGR = [495, 555, 760]
 BGR_indices = [np.argmin(np.abs(wavelengths - target)) for target in BGR]
 BGR_wavelengths = wavelengths[BGR_indices]
 
-raw_wavelengths = np.linspace(400, 2500, data.shape[-1])
+raw_wavelengths = wavelengths
 above_r_wavelengths = np.linspace(BGR_wavelengths[2], wavelengths[-1], num=6)[1:]
 
 

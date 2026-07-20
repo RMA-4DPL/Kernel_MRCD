@@ -36,6 +36,12 @@ def false_positive(y_true, y_score):
     masked_labels = temp_labels * temp_scores
     return np.sum(masked_labels)/len(masked_labels)
 
+def _evenly_spaced_wavelengths(n_bands, lo, hi):
+    # Best-effort approximation: the source files carry no per-band wavelength
+    # metadata, so bands are assumed evenly spaced across the sensor's published
+    # spectral range rather than reflecting each band's true center wavelength.
+    return np.linspace(lo, hi, n_bands)
+
 def load_salinas(dataset_filepath):
     salinas_data = scipy.io.loadmat(os.path.join(dataset_filepath, 'Salinas.mat'))['salinas']
     salinas_corrected_data = scipy.io.loadmat(os.path.join(dataset_filepath, 'Salinas_corrected.mat'))['salinas_corrected']
@@ -66,8 +72,11 @@ def load_salinas(dataset_filepath):
     unique_labels, counts = np.unique(salinas_labels, return_counts=True)
     for l, label in enumerate(unique_labels):
         assert counts[l] == labels_ids[label][1]
-    
-    return salinas_data[None, ...], salinas_corrected_data[None, ...], salinas_labels[None, ...], labels_ids
+
+    # AVIRIS sensor, ~400-2500nm.
+    wavelengths = _evenly_spaced_wavelengths(salinas_data.shape[-1], 400, 2500)
+
+    return salinas_data[None, ...], salinas_corrected_data[None, ...], salinas_labels[None, ...], labels_ids, wavelengths
 
 def load_salinas_A(dataset_filepath):
     salinas_data = scipy.io.loadmat(os.path.join(dataset_filepath, 'SalinasA.mat'))['salinasA']
@@ -89,8 +98,11 @@ def load_salinas_A(dataset_filepath):
     unique_labels, counts = np.unique(salinas_labels, return_counts=True)
     for l, label in enumerate(unique_labels):
         assert counts[l] == labels_ids[label][1]
-    
-    return salinas_data[None, ...], salinas_corrected_data[None, ...], salinas_labels[None, ...], labels_ids
+
+    # AVIRIS sensor, ~400-2500nm.
+    wavelengths = _evenly_spaced_wavelengths(salinas_data.shape[-1], 400, 2500)
+
+    return salinas_data[None, ...], salinas_corrected_data[None, ...], salinas_labels[None, ...], labels_ids, wavelengths
 
 def load_hydice(dataset_filepath):
     hydice_mat = scipy.io.loadmat(os.path.join(dataset_filepath, 'HYDICE-urban.mat'))
@@ -106,7 +118,30 @@ def load_hydice(dataset_filepath):
     for l, label in enumerate(unique_labels):
         assert counts[l] == labels_ids[label][1]
 
-    return hydice_data[None, ...], hydice_data[None, ...], hydice_labels[None, ...], labels_ids
+    # HYDICE sensor, ~400-2500nm.
+    wavelengths = _evenly_spaced_wavelengths(hydice_data.shape[-1], 400, 2500)
+
+    return hydice_data[None, ...], hydice_data[None, ...], hydice_labels[None, ...], labels_ids, wavelengths
+
+def load_cri(dataset_filepath):
+    cri_mat = scipy.io.loadmat(os.path.join(dataset_filepath, 'Cri.mat'))
+    cri_data = cri_mat['data']
+    cri_labels = cri_mat['map']
+
+    labels_ids = {0: ("Background", 159140),
+        1: ("Anomaly", 860),
+    }
+
+    # Check that label counts match
+    unique_labels, counts = np.unique(cri_labels, return_counts=True)
+    for l, label in enumerate(unique_labels):
+        assert counts[l] == labels_ids[label][1]
+
+    # Sensor/spectral range for this scene is not documented; assumed VNIR (~400-1000nm)
+    # given the low (46) band count and 8-bit dynamic range.
+    wavelengths = _evenly_spaced_wavelengths(cri_data.shape[-1], 650, 1100)
+
+    return cri_data[None, ...], cri_data[None, ...], cri_labels[None, ...], labels_ids, wavelengths
 
 def load_pavia(dataset_filepath):
     pavia_data = scipy.io.loadmat(os.path.join(dataset_filepath, 'Pavia.mat'))['pavia']
@@ -129,7 +164,10 @@ def load_pavia(dataset_filepath):
     for l, label in enumerate(unique_labels):
         assert counts[l] == labels_ids[label][1]
 
-    return pavia_data[None, ...], pavia_data[None, ...], pavia_labels[None, ...], labels_ids
+    # ROSIS-03 sensor, ~430-860nm.
+    wavelengths = _evenly_spaced_wavelengths(pavia_data.shape[-1], 430, 860)
+
+    return pavia_data[None, ...], pavia_data[None, ...], pavia_labels[None, ...], labels_ids, wavelengths
 
 def load_pavia_u(dataset_filepath):
     paviaU_data = scipy.io.loadmat(os.path.join(dataset_filepath, 'PaviaU.mat'))['paviaU']
@@ -152,7 +190,10 @@ def load_pavia_u(dataset_filepath):
     for l, label in enumerate(unique_labels):
         assert counts[l] == labels_ids[label][1]
 
-    return paviaU_data[None, ...], paviaU_data[None, ...], paviaU_labels[None, ...], labels_ids
+    # ROSIS-03 sensor, ~430-860nm.
+    wavelengths = _evenly_spaced_wavelengths(paviaU_data.shape[-1], 430, 860)
+
+    return paviaU_data[None, ...], paviaU_data[None, ...], paviaU_labels[None, ...], labels_ids, wavelengths
 
 def load_sandiego(dataset_filepath):
     sandiego_data = scipy.io.loadmat(os.path.join(dataset_filepath, 'Sandiego.mat'))['Sandiego']
@@ -161,7 +202,10 @@ def load_sandiego(dataset_filepath):
 
     labels_ids = {0: ("Background", int(sandiego_labels.size))}
 
-    return sandiego_data[None, ...], sandiego_data[None, ...], sandiego_labels[None, ...], labels_ids
+    # AVIRIS sensor, ~400-2500nm.
+    wavelengths = _evenly_spaced_wavelengths(sandiego_data.shape[-1], 400, 2500)
+
+    return sandiego_data[None, ...], sandiego_data[None, ...], sandiego_labels[None, ...], labels_ids, wavelengths
 
 def load_indiana(dataset_filepath):
     indiana_data = erdas.open(os.path.join(dataset_filepath, '92AV3C.lan')).load()
@@ -191,10 +235,14 @@ def load_indiana(dataset_filepath):
     for l, label in enumerate(unique_labels):
         assert counts[l] == labels_ids[label][1]
 
-    return indiana_data[None, ...], indiana_data[None, ...], indiana_labels[None, ...], labels_ids
+    # AVIRIS sensor, ~400-2500nm.
+    wavelengths = _evenly_spaced_wavelengths(indiana_data.shape[-1], 400, 2500)
+
+    return indiana_data[None, ...], indiana_data[None, ...], indiana_labels[None, ...], labels_ids, wavelengths
 
 def load_whu_hi(dataset_filepath):
-    whu_hi_data = np.asarray(spectral.open_image(os.path.join(dataset_filepath, 'WHU-Hi-LongKou.hdr')).load())
+    whu_hi_image = spectral.open_image(os.path.join(dataset_filepath, 'WHU-Hi-LongKou.hdr'))
+    whu_hi_data = np.asarray(whu_hi_image.load())
     whu_hi_labels = np.asarray(spectral.open_image(os.path.join(dataset_filepath, 'WHU-Hi-LongKou_gt.hdr')).load()).squeeze(axis=-1).astype(np.uint8)
 
     labels_ids = {0: ("Unclassified", 15458),
@@ -214,7 +262,10 @@ def load_whu_hi(dataset_filepath):
     for l, label in enumerate(unique_labels):
         assert counts[l] == labels_ids[label][1]
 
-    return whu_hi_data[None, ...], whu_hi_data[None, ...], whu_hi_labels[None, ...], labels_ids
+    # Real per-band center wavelengths from the ENVI header.
+    wavelengths = np.asarray(whu_hi_image.bands.centers)
+
+    return whu_hi_data[None, ...], whu_hi_data[None, ...], whu_hi_labels[None, ...], labels_ids, wavelengths
 
 def load_abu(dataset_filepath, filename):
     abu_mat = scipy.io.loadmat(os.path.join(dataset_filepath, filename))
@@ -225,7 +276,10 @@ def load_abu(dataset_filepath, filename):
     labels_ids = {int(label): (name, int(count))
                   for label, name, count in zip(unique_labels, ["Background", "Anomaly"], counts)}
 
-    return abu_data[None, ...], abu_data[None, ...], abu_labels[None, ...], labels_ids
+    # Source sensor per scene is not documented; approximated as AVIRIS-like, ~400-2500nm.
+    wavelengths = _evenly_spaced_wavelengths(abu_data.shape[-1], 400, 2500)
+
+    return abu_data[None, ...], abu_data[None, ...], abu_labels[None, ...], labels_ids, wavelengths
 
 def _parse_envi_roi_points(txt_path):
     with open(txt_path, 'r') as f:
@@ -246,7 +300,8 @@ def _parse_envi_roi_points(txt_path):
     return rois
 
 def load_cooke_city(dataset_filepath):
-    cooke_city_data = np.asarray(spectral.open_image(os.path.join(dataset_filepath, 'HyMap', 'self_test_refl.hdr')).load())
+    cooke_city_image = spectral.open_image(os.path.join(dataset_filepath, 'HyMap', 'self_test_refl.hdr'))
+    cooke_city_data = np.asarray(cooke_city_image.load())
 
     H, W = cooke_city_data.shape[:2]
     cooke_city_labels = np.zeros((H, W), dtype=np.uint8)
@@ -263,7 +318,10 @@ def load_cooke_city(dataset_filepath):
         1: ("Target", int(np.sum(cooke_city_labels == 1))),
     }
 
-    return cooke_city_data[None, ...], cooke_city_data[None, ...], cooke_city_labels[None, ...], labels_ids
+    # Real per-band center wavelengths from the ENVI header.
+    wavelengths = np.asarray(cooke_city_image.bands.centers)
+
+    return cooke_city_data[None, ...], cooke_city_data[None, ...], cooke_city_labels[None, ...], labels_ids, wavelengths
 
 def create_save_dir_name(base, model_name, experiment_settings):
     base = os.path.join(base, experiment_settings['dataset'])
@@ -293,7 +351,8 @@ def load_dataset(base_path, dataset_name):
                 'SanDiego': load_sandiego,
                 'Indiana': load_indiana,
                 'WHU-HI': load_whu_hi,
-                'cooke_city': load_cooke_city}
+                'cooke_city': load_cooke_city,
+                'CRI': load_cri}
     for category, count in ABU_SCENE_COUNTS.items():
         for i in range(1, count + 1):
             datasets[f"ABU_{category}_{i}"] = functools.partial(load_abu, filename=f"abu-{category}-{i}.mat")
@@ -303,8 +362,8 @@ def load_dataset(base_path, dataset_name):
                          for category, count in ABU_SCENE_COUNTS.items() for i in range(1, count + 1)})
     if dataset_name in datasets:
         dataset_filepath = os.path.join(base_path, 'Dataset', dataset_dirs.get(dataset_name, dataset_name))
-        raw_data, data, labels, labels_ids = datasets[dataset_name](dataset_filepath)
-        return raw_data, data, labels, labels_ids
+        raw_data, data, labels, labels_ids, wavelengths = datasets[dataset_name](dataset_filepath)
+        return raw_data, data, labels, labels_ids, wavelengths
     else:
         print(f"Dataset {dataset_name} is not available.")
 

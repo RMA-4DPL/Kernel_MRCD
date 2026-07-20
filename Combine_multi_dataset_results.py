@@ -214,9 +214,7 @@ for dataset in datasets_found:
         print(f"Skipping {dataset} in scene visualization: no Raw_results.pickle found for any model.")
         continue
 
-    raw_data, _, label_array, label_ids = load_dataset(base_path=base_filepath, dataset_name=dataset)
-    n_bands = raw_data.shape[-1]
-    wavelengths = np.linspace(400, 2500, n_bands)
+    raw_data, _, label_array, label_ids, wavelengths = load_dataset(base_path=base_filepath, dataset_name=dataset)
     bgr_targets = [495, 555, 760]  # approximate blue/green/red wavelengths (nm)
     b_idx, g_idx, r_idx = [np.argmin(np.abs(wavelengths - t)) for t in bgr_targets]
     visual = np.stack([
