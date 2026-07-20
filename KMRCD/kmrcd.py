@@ -34,10 +34,12 @@ THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
 
 from types import SimpleNamespace
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 from scipy.optimize import brentq
 from scipy.stats import norm
+from scipy.linalg import cho_factor, cho_solve
 
 from .kernels import LinKernel, RbfKernel, AutoRbfKernel
 from . import utils
@@ -65,12 +67,27 @@ class Kernel_MRCD:
         K = self.kernel.compute(x, x)
 
         # Grab observation ranking from initial estimators
-        solutions = [
-            SimpleNamespace(name="SDO", outlyingness_indices=utils.sdo(K, self.alpha)),
-            SimpleNamespace(name="SpatialRank", outlyingness_indices=utils.spatial_rank(K, self.alpha)),
-            SimpleNamespace(name="SpatialMedian", outlyingness_indices=utils.spatial_median_estimator(K, self.alpha)),
-            SimpleNamespace(name="SSCM", outlyingness_indices=utils.sscm(K)),
+        # solutions = [
+        #     SimpleNamespace(name="SDO", outlyingness_indices=utils.sdo(K, self.alpha)),
+        #     SimpleNamespace(name="SpatialRank", outlyingness_indices=utils.spatial_rank(K, self.alpha)),
+        #     SimpleNamespace(name="SpatialMedian", outlyingness_indices=utils.spatial_median_estimator(K, self.alpha)),
+        #     SimpleNamespace(name="SSCM", outlyingness_indices=utils.sscm(K)),
+        # ]
+        # The four estimators are independent (each only reads K/alpha), so run
+        # them concurrently; numpy/scipy linalg calls release the GIL, so
+        # threads (not processes) are enough to get real overlap.
+        estimator_specs = [
+            ("SDO", utils.sdo, (K, self.alpha)),
+            ("SpatialRank", utils.spatial_rank, (K, self.alpha)),
+            ("SpatialMedian", utils.spatial_median_estimator, (K, self.alpha)),
+            ("SSCM", utils.sscm, (K,)),
         ]
+        with ThreadPoolExecutor(max_workers=len(estimator_specs)) as executor:
+            futures = [executor.submit(fn, *args) for _, fn, args in estimator_specs]
+            solutions = [
+                SimpleNamespace(name=name, outlyingness_indices=future.result())
+                for (name, _, _), future in zip(estimator_specs, futures)
+            ]
 
         scfac = utils.mcd_cons(p, self.alpha)
         h = int(np.ceil(n * self.alpha))
@@ -82,7 +99,12 @@ class Kernel_MRCD:
 
             # Determine rho for each estimator
             idx = sol.hsubset_indices
-            s = np.linalg.svd(utils.center(K[np.ix_(idx, idx)]), compute_uv=False)
+            # s = np.linalg.svd(utils.center(K[np.ix_(idx, idx)]), compute_uv=False)
+            # The input is a symmetric centered kernel Gram submatrix, so its
+            # singular values equal its (non-negative) eigenvalues; eigvalsh is
+            # the specialized symmetric solver and noticeably faster than a
+            # general SVD when only the spectrum is needed.
+            s = np.linalg.eigvalsh(utils.center(K[np.ix_(idx, idx)]))
             nx = len(idx)
             e_min, e_max = s.min(), s.max()
 
@@ -103,10 +125,47 @@ class Kernel_MRCD:
 
         # Refine each initial estimation with C-steps
         Ktt_diag = np.diag(K)
-        for sol in solutions:
+        # for sol in solutions:
+        #     converged = False
+        #     for iteration in range(1, self.c_step_iterations_allowed + 1):
+        #         print((f"Running C-step {iteration} for {sol.name} estimator"))
+        #         h_subset = sol.hsubset_indices
+        #         Kt = K[:, h_subset]
+        #         Kx = Kt[h_subset, :]
+        #         nx = Kx.shape[0]
+        #         Kc = utils.center(Kx)
+        #         Kt_c = utils.center(Kx, Kt)
+        #         Kxx = Ktt_diag - (2 / nx) * Kt.sum(axis=1) + (1 / nx ** 2) * Kx.sum()
+        #         M = (1 - rho) * scfac * Kc + nx * rho * np.eye(nx)
+        #         Minv_Ktc = np.linalg.solve(M, Kt_c.T)
+        #         smd = (1 / rho) * (Kxx - (1 - rho) * scfac * np.sum(Kt_c * Minv_Ktc.T, axis=1))
+        #         new_hsubset = np.argsort(smd, kind="stable")[:nx]
+        #         sol.M = M
+        #         sol.Kc = Kc
+        #         # Redefine the h-subset
+        #         sol.hsubset_indices = new_hsubset
+        #         if set(h_subset).issubset(set(new_hsubset)):
+        #             sigma = np.linalg.svd(Kc, compute_uv=False)
+        #             sigma = (1 - rho) * scfac * sigma + len(new_hsubset) * rho
+        #             sol.obj = np.sum(np.log(sigma))
+        #             sol.smd = smd
+        #             converged = True
+        #             break
+        #     if not converged:
+        #         sigma = np.linalg.svd(Kc, compute_uv=False)
+        #         sigma = (1 - rho) * scfac * sigma + len(new_hsubset) * rho
+        #         sol.obj = np.sum(np.log(sigma))
+        #         sol.smd = smd
+        #     #assert converged, "no C-step convergence"
+        # The per-solution C-step refinement is independent across solutions
+        # (each only reads K/Ktt_diag/rho/scfac and mutates its own sol), so
+        # run all 4 concurrently the same way as the initial estimators above.
+        def _refine_solution(sol):
             converged = False
+            new_hsubset = None
+            Kc = None
             for iteration in range(1, self.c_step_iterations_allowed + 1):
-                #print((f"Running C-step {iteration} for {sol.name} estimator"))
+                # print((f"Running C-step {iteration} for {sol.name} estimator"))
                 h_subset = sol.hsubset_indices
                 Kt = K[:, h_subset]
                 Kx = Kt[h_subset, :]
@@ -115,28 +174,38 @@ class Kernel_MRCD:
                 Kt_c = utils.center(Kx, Kt)
                 Kxx = Ktt_diag - (2 / nx) * Kt.sum(axis=1) + (1 / nx ** 2) * Kx.sum()
                 M = (1 - rho) * scfac * Kc + nx * rho * np.eye(nx)
-                Minv_Ktc = np.linalg.solve(M, Kt_c.T)
+                # M is a positive combination of a PSD centered kernel Gram
+                # matrix and a positive multiple of the identity, so it is
+                # always SPD; a Cholesky solve is faster than a general LU
+                # solve and is called on every C-step iteration.
+                Minv_Ktc = cho_solve(cho_factor(M, lower=False, check_finite=False), Kt_c.T)
                 smd = (1 / rho) * (Kxx - (1 - rho) * scfac * np.sum(Kt_c * Minv_Ktc.T, axis=1))
                 new_hsubset = np.argsort(smd, kind="stable")[:nx]
                 sol.M = M
                 sol.Kc = Kc
                 # Redefine the h-subset
                 sol.hsubset_indices = new_hsubset
-                if set(h_subset).issubset(set(new_hsubset)):
+                # h_subset and new_hsubset always have equal length (nx never
+                # changes across iterations), so subset-of-equal-size is the
+                # same as set-equality; sorting avoids building Python sets.
+                if np.array_equal(np.sort(h_subset), np.sort(new_hsubset)):
                     # print(f"Convergence at iteration {iteration}, {sol.name}")
-                    sigma = np.linalg.svd(Kc, compute_uv=False)
+                    sigma = np.linalg.eigvalsh(Kc)
                     sigma = (1 - rho) * scfac * sigma + len(new_hsubset) * rho
                     sol.obj = np.sum(np.log(sigma))
                     sol.smd = smd
                     converged = True
                     break
             if not converged:
-                sigma = np.linalg.svd(Kc, compute_uv=False)
+                sigma = np.linalg.eigvalsh(Kc)
                 sigma = (1 - rho) * scfac * sigma + len(new_hsubset) * rho
                 sol.obj = np.sum(np.log(sigma))
                 sol.smd = smd
                 # print(f"No convergence for {sol.name}")
             #assert converged, "no C-step convergence"
+
+        with ThreadPoolExecutor(max_workers=len(solutions)) as executor:
+            list(executor.map(_refine_solution, solutions))
 
         # Select the solution with the lowest objective function ...
         solution = min(solutions, key=lambda s: s.obj)
