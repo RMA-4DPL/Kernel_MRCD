@@ -16,7 +16,7 @@ argument_parser.add_argument('--dataset', type=str, default='Salinas', help='Sel
 argument_parser.add_argument('--recalculate', action='store_true', help='Recalculate metrics even if already present in Results_summary.xlsx')
 argument_parser.set_defaults(recalculate=False)
 argument_parser.add_argument('--scaler', type=str, default='Standard', help='Scaler name (overrides experiment_settings Scaler)')
-argument_parser.add_argument('--scaling_scope', type=str, default='per_sample', choices=['global', 'per_sample'], help='Scaling scope for the Scaler (overrides experiment_settings Scaler scaling_scope)')
+argument_parser.add_argument('--scaling_scope', type=str, default='per_sample', choices=['global', 'per_sample', 'all'], help='Scaling scope for the Scaler (overrides experiment_settings Scaler scaling_scope)')
 argument_parser.add_argument('--subsample', type=str, default='random', help='Subsampling method (must match main.py)')
 argument_parser.add_argument('--subsample_amount', type=int, default=1000, help='Amount of data points sampled (must match main.py)')
 args = argument_parser.parse_args()
@@ -71,6 +71,47 @@ def compute_sample_metrics(scores, label_array, anomaly_labels, category_ids, me
     return metric_per_sample, perc_correct_per_sample
 
 
+def compute_background_class_distribution(background_indices, label_array, experiment_configs, uses_kernel, category_ids, desc):
+    """For each row, recover which ground-truth class the pixels selected as background
+    (the MCD/MRCD/KMRCD h-subset) belong to, and tally the class distribution.
+
+    Only the subsampled pixel *vectors* are stored in Raw_results.pickle (see main.py's
+    "Subsamples"/"Background_pixels"), not their original spatial indices, so the random
+    subsample selection (np.random.seed(4)-based, see subsampler.py) is deterministically
+    replayed here to map Background_indices back onto label_array.
+    """
+    L, H, W = label_array.shape
+    subsample_cfg = experiment_configs.get('Subsample', {}) or {}
+    subsample_name = subsample_cfg.get('name', 'none')
+    subsample_amount = subsample_cfg.get('amount')
+    counts_per_sample = np.zeros((L, len(category_ids)), dtype=np.float32)
+
+    for r in tqdm(range(L), total=L, desc=desc):
+        row_H, row_W = label_array[r].shape
+        # Mirrors main.py's row[::2,::2] downsampling, applied before kernel-background
+        # selection on large rows when no explicit subsampling is configured.
+        if uses_kernel and subsample_name == 'none' and row_H * row_W > 80000:
+            label_row = label_array[r][::2, ::2].reshape(-1)
+        else:
+            label_row = label_array[r].reshape(-1)
+
+        if subsample_name == 'random':
+            np.random.seed(4)
+            n_pixels = label_row.shape[0]
+            sampled_positions = np.random.choice(np.arange(n_pixels), size=min(n_pixels, subsample_amount), replace=False)
+            candidate_labels = label_row[sampled_positions]
+        else:
+            candidate_labels = label_row
+
+        selected_labels = candidate_labels[background_indices[r]]
+        for c, cid in enumerate(category_ids):
+            counts_per_sample[r, c] = np.count_nonzero(selected_labels == cid)
+
+    totals = counts_per_sample.sum(axis=1, keepdims=True)
+    percentages_per_sample = np.divide(counts_per_sample, totals, out=np.zeros_like(counts_per_sample), where=totals > 0)
+    return percentages_per_sample
+
+
 def summarize(metric_dict, perc_correct_dict, metrics_to_calc):
     metrics_summary = {}
     perc_summary = {}
@@ -98,7 +139,9 @@ metric_dict = {}
 perc_correct_dict = {}
 metric_dict_binary = {}
 perc_correct_dict_binary = {}
+bg_dist_dict = {}
 category_names = None
+all_category_names = None
 for m in metrics_to_calc:
     metric_dict[m] = {}
     metric_dict_binary[m] = {}
@@ -237,13 +280,21 @@ for model in model_dirs:
         scores = x["Scores"]  # (L, H, W)
         scores_binary = x.get("Scores_binary")  # (L, H, W), only present for main.py results
         label_ids = x["Label_ids"]
+        background_indices = x.get("Background_indices")  # per-row indices of the selected background (h-subset) pixels
+        experiment_configs = x.get("Experiment_configs") or {}
+        background_configs_info = x.get("Background_configs") or {}
+        background_config_used = next(iter(background_configs_info.values()), {}) or {}
+        uses_kernel = 'kernel' in background_config_used
         del x
 
         category_ids = sorted(cid for cid in label_ids if cid != 0)
-        if args.dataset == 'WHU-HI': 
-            category_ids = sorted(cid for cid in label_ids if cid != 7) # Set water as the "normal class" for WHU-HI dataset
+        if args.dataset == 'WHU-HI':
+            category_ids = sorted(cid for cid in label_ids if cid != 7 and cid !=0) # Set water and "unclassified" as the "normal class" for WHU-HI dataset
         if category_names is None:
             category_names = [label_ids[cid][0] for cid in category_ids]
+        all_category_ids = sorted(label_ids.keys())
+        if all_category_names is None:
+            all_category_names = [label_ids[cid][0] for cid in all_category_ids]
 
         # Anomaly ground truth: any non-background class counts as an anomaly. Both "scores"
         # and "scores_binary" are evaluated against this same label-derived ground truth.
@@ -258,6 +309,12 @@ for model in model_dirs:
                 metric_dict[m][model] = metric_per_sample[m]
             perc_correct_dict[model] = perc_correct_per_sample
             models_found += 1
+
+            if background_indices is not None:
+                bg_dist_dict[model] = compute_background_class_distribution(
+                    background_indices, label_array, experiment_configs, uses_kernel, all_category_ids, f"{model} (background)")
+            else:
+                print(f"No background indices found for {model}; skipping background class distribution.")
 
         if not cached_binary:
             if scores_binary is None:
@@ -310,6 +367,17 @@ else:
         metric_df.to_excel(writer, sheet_name='Metrics', index=True)
         perc_correct_df = pd.DataFrame.from_dict(perc_summary, orient='index', columns=category_names)
         perc_correct_df.to_excel(writer, sheet_name='Percentage correct', index=True)
+        if bg_dist_dict:
+            bg_dist_summary = {}
+            for bg_model, values in bg_dist_dict.items():
+                mean = np.nanmean(values, axis=0)
+                std = np.nanstd(values, axis=0)
+                if len(values) == 1:
+                    bg_dist_summary[bg_model] = [f"{mean[i]:.3f}" for i in range(len(mean))]
+                else:
+                    bg_dist_summary[bg_model] = [f"{mean[i]:.3f} ± {std[i]:.3f}" for i in range(len(mean))]
+            bg_dist_df = pd.DataFrame.from_dict(bg_dist_summary, orient='index', columns=all_category_names)
+            bg_dist_df.to_excel(writer, sheet_name='Background class distribution', index=True)
     print(f"Saved results to {summary_path}")
 
 if models_found_binary == 0:
