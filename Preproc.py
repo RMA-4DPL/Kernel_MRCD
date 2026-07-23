@@ -49,9 +49,12 @@ class StandardScaler():
             for i in range(X.shape[-1]):
                 self.mean[:,:,:,i] = np.mean(X[:,:,:,i], keepdims=True)
                 self.std[:,:,:,i] = np.std(X[:,:,:,i], keepdims=True)
+        elif self.scaling_scope == 'all':
+            self.mean = np.mean(X, keepdims=True)
+            self.std = np.std(X, keepdims=True)
 
     def transform(self, X):
-        if self.scaling_scope == 'global':
+        if self.scaling_scope == 'global' or self.scaling_scope=='all':
             return (X - self.mean) / self.std
         else:
             axis_to_reduce = tuple(i for i in range(X.ndim) if i not in (0, X.ndim-1))
