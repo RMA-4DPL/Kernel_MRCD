@@ -37,16 +37,20 @@ if __name__ == "__main__":
 
     argument_parser = argparse.ArgumentParser(description='Process results of AD models')
     argument_parser.add_argument('--dataset', type=str, default='Salinas', help='Select which dataset to load (default:Salinas).')
-    argument_parser.add_argument('--model', type=str, default='base_rx', required=False, help='Name of the model to process')   
+    argument_parser.add_argument('--model', type=str, default='base_amf', required=False, help='Name of the model to process')   
     argument_parser.add_argument('--retrain', action='store_true', help='Retrain the model if specified')
     argument_parser.set_defaults(retrain=False)
+    argument_parser.add_argument('--recalculate_background', action='store_true', help='Recompute background statistics (subsamples, indices, mean/cov) without recomputing scores; reuses scores from an existing Raw_results.pickle.')
+    argument_parser.set_defaults(recalculate_background=False)
+    argument_parser.add_argument('--recalculate_scores', action='store_true', help='Recompute anomaly scores without recomputing background statistics; reuses subsamples/background pixels/indices/mean/cov from an existing Raw_results.pickle.')
+    argument_parser.set_defaults(recalculate_scores=False)
     argument_parser.add_argument('--scaler', type=str, default='Standard', help='Scaler name (overrides experiment_settings Scaler)')
-    argument_parser.add_argument('--scaling_scope', type=str, default='per_sample', choices=['global', 'per_sample'], help='Scaling scope for the Scaler (overrides experiment_settings Scaler scaling_scope)')
+    argument_parser.add_argument('--scaling_scope', type=str, default='per_sample', choices=['global', 'per_sample', 'all'], help='Scaling scope for the Scaler (overrides experiment_settings Scaler scaling_scope)')
     argument_parser.add_argument('--background_model', type=str, default='MCD', help='Model to select background sample for statistics (default: Sample).')
-    argument_parser.add_argument('--background_config', type=str, default='kmrcd_0.75_rbf', help='Name of the entry in background_configs.yaml to load parameters from (overrides --background_model with its model_name).')
+    argument_parser.add_argument('--background_config', type=str, default='ledoit_wolf', help='Name of the entry in background_configs.yaml to load parameters from (overrides --background_model with its model_name).')
     argument_parser.add_argument('--gpu', type=int, default=3, help='GPU device number to use (default: 0)')
     argument_parser.add_argument('--subsample', type=str, default='random', help='method to use for data subsampling.')
-    argument_parser.add_argument('--subsample_amount', type=int, default=1000, help='amount of data point to sample')
+    argument_parser.add_argument('--subsample_amount', type=int, default=10000, help='amount of data point to sample')
     args = argument_parser.parse_args()
 
     # CUDA for PyTorch
@@ -92,8 +96,26 @@ if __name__ == "__main__":
     
     save_dir = create_save_dir_name(base_filepath_results, model, experiment_settings)
     os.makedirs(save_dir, exist_ok=True)
-    if not os.path.exists(os.path.join(save_dir,"Raw_results.pickle")) or retrain:
+    raw_results_path = os.path.join(save_dir, "Raw_results.pickle")
+    recalculate_background_only = args.recalculate_background and not retrain and os.path.exists(raw_results_path)
+    recalculate_scores_only = args.recalculate_scores and not retrain and os.path.exists(raw_results_path)
+    if not os.path.exists(raw_results_path) or retrain or recalculate_background_only or recalculate_scores_only:
 
+        cached_results = None
+        if recalculate_background_only:
+            print(f"Reusing scores from {raw_results_path}, recalculating background statistics only")
+            with open(raw_results_path, "rb") as f:
+                cached_results = pickle.load(f)
+        elif recalculate_scores_only:
+            with open(raw_results_path, "rb") as f:
+                cached_results = pickle.load(f)
+            background_keys = ["Subsamples", "Background_pixels", "Background_indices", "Background_mean", "Background_covariance"]
+            if not all(key in cached_results for key in background_keys):
+                print(f"{raw_results_path} does not contain background statistics; recalculating background from scratch instead.")
+                recalculate_scores_only = False
+                cached_results = None
+            else:
+                print(f"Reusing background statistics from {raw_results_path}, recalculating scores only")
 
         print('Loading data')
         data_array_raw, data_array, label_array, labels_ids, wavelengths = load_dataset(base_path=base_filepath, dataset_name=args.dataset)
@@ -122,9 +144,26 @@ if __name__ == "__main__":
             print(f"Loading {model} config")
             AD_model.load_config(config)
 
-        scores = np.zeros((L, H, W), dtype=np.float32)
-        scores_binary = np.zeros((L, H, W), dtype=np.float32)
-        times = np.zeros((L,), dtype=np.float32)
+        if cached_results is not None:
+            scores = cached_results["Scores"]
+            scores_binary = cached_results["Scores_binary"]
+            times = cached_results.get("Logging", {}).get("Runtime", np.zeros((L,), dtype=np.float32))
+        else:
+            scores = np.zeros((L, H, W), dtype=np.float32)
+            scores_binary = np.zeros((L, H, W), dtype=np.float32)
+            times = np.zeros((L,), dtype=np.float32)
+        if recalculate_scores_only:
+            subsamples_per_row = cached_results["Subsamples"]
+            background_pixels_per_row = cached_results["Background_pixels"]
+            background_indices_per_row = cached_results["Background_indices"]
+            background_mean_per_row = cached_results["Background_mean"]
+            background_cov_per_row = cached_results["Background_covariance"]
+        else:
+            subsamples_per_row = []
+            background_pixels_per_row = []
+            background_indices_per_row = []
+            background_mean_per_row = []
+            background_cov_per_row = []
         run_gpu=False
         if hasattr(AD_model, 'run_gpu'):
             AD_model.gpu=True
@@ -136,59 +175,80 @@ if __name__ == "__main__":
                 row = row[::2,::2]
                 flag_subsample = True
             start_time = time.time()
-            print('Getting background statistics.')
-            if 'kernel' in background_config:
-                bg_data = row
-                if experiment_settings['Subsample']['name'] != 'none':
-                    sampler = get_subsampler(experiment_settings['Subsample']['name'])
-                    bg_data = sampler(bg_data, experiment_settings['Subsample']['amount'])
-                indices = background_model(bg_data)
-                bg = bg_data.reshape((-1, bg_data.shape[-1]))[indices]
+            if recalculate_scores_only:
+                bg = background_pixels_per_row[r]
+                if 'kernel' not in background_config:
+                    mean_N = background_mean_per_row[r]
+                    cov = background_cov_per_row[r]
+                    AD_model.set_mean_N(mean_N)
+                    AD_model.set_cov(cov)
             else:
-                bg_data = row
-                if experiment_settings['Subsample']['name'] != 'none':
-                    sampler = get_subsampler(experiment_settings['Subsample']['name'])
-                    bg_data = sampler(bg_data, experiment_settings['Subsample']['amount'])
-                mean_N, cov = background_model(bg_data)
-                bg = bg_data.reshape((-1, bg_data.shape[-1]))
-                AD_model.set_mean_N(mean_N)
-                AD_model.set_cov(cov)
-            print('Calculating anomaly scores.')
-            row_computed = False
-            while not row_computed:
-                try:
-                    if model=='base_rx': # Try to run the model on GPU, if it fails, fall back to CPU execution
-                        row_scores = AD_model(row, bg)
-                        if flag_subsample:
-                            row_scores = row_scores.repeat(2, axis=0).repeat(2, axis=1)[:H, :W]
-                        scores[r] = row_scores
-                        scores_binary[r] = scores[r]
-                    else:
-                        label_full = label_array[r][::2,::2] if flag_subsample else label_array[r]
-                        temp_scores = np.zeros((len(labels_ids)-1, H, W))
-                        for i, id in enumerate(labels_ids):
-                            if id != 0 and id != id_normal:
-                                target = np.mean(row[np.where(label_full==id)], axis=0)
-                                row_scores = AD_model(row, bg, target)
-                                if flag_subsample:
-                                    row_scores = row_scores.repeat(2, axis=0).repeat(2, axis=1)[:H, :W]
-                                temp_scores[i-1] = row_scores
-                        scores[r] = np.max(temp_scores, axis=0)
-                        target = np.mean(row[np.where((label_full!=0) & (label_full!=id_normal))], axis=0)
-                        row_scores = AD_model(row, bg, target)
-                        if flag_subsample:
-                            row_scores = row_scores.repeat(2, axis=0).repeat(2, axis=1)[:H, :W]
-                        scores_binary[r] = row_scores
-                    row_computed = True
-                except RuntimeError as e:
-                    print(f"Error running model {model} on GPU for row {r}: {e}")
-                    print("Falling back to CPU execution.")
-                    AD_model.gpu=False
-            # Reset stats for new data
-            AD_model.set_mean_N(None)
-            AD_model.set_cov(None)
-                
-            times[r] = time.time() - start_time
+                print('Getting background statistics.')
+                if 'kernel' in background_config:
+                    bg_data = row
+                    if experiment_settings['Subsample']['name'] != 'none':
+                        sampler = get_subsampler(experiment_settings['Subsample']['name'])
+                        bg_data = sampler(bg_data, experiment_settings['Subsample']['amount'])
+                    indices = background_model(bg_data)
+                    bg = bg_data.reshape((-1, bg_data.shape[-1]))[indices]
+                else:
+                    bg_data = row
+                    if experiment_settings['Subsample']['name'] != 'none':
+                        sampler = get_subsampler(experiment_settings['Subsample']['name'])
+                        bg_data = sampler(bg_data, experiment_settings['Subsample']['amount'])
+                    mean_N, cov = background_model(bg_data)
+                    indices = getattr(background_model, 'support_indices', np.arange(bg_data.shape[0]))
+                    bg = bg_data.reshape((-1, bg_data.shape[-1]))[indices]
+                    AD_model.set_mean_N(mean_N)
+                    AD_model.set_cov(cov)
+
+                subsamples_per_row.append(bg_data.reshape((-1, bg_data.shape[-1])))
+                background_pixels_per_row.append(bg)
+                background_indices_per_row.append(indices)
+                if 'kernel' in background_config:
+                    background_mean_per_row.append(np.mean(bg, axis=0))
+                    background_cov_per_row.append(AD_model.kernel.compute(bg-np.mean(bg, axis=0), bg-np.mean(bg, axis=0)))
+                else:
+                    background_mean_per_row.append(mean_N)
+                    background_cov_per_row.append(cov)
+
+            if not recalculate_background_only:
+                print('Calculating anomaly scores.')
+                row_computed = False
+                while not row_computed:
+                    try:
+                        if model=='base_rx': # Try to run the model on GPU, if it fails, fall back to CPU execution
+                            row_scores = AD_model(row, bg)
+                            if flag_subsample:
+                                row_scores = row_scores.repeat(2, axis=0).repeat(2, axis=1)[:H, :W]
+                            scores[r] = row_scores
+                            scores_binary[r] = scores[r]
+                        else:
+                            label_full = label_array[r][::2,::2] if flag_subsample else label_array[r]
+                            temp_scores = np.zeros((len(labels_ids)-1, H, W))
+                            for i, id in enumerate(labels_ids):
+                                if id != 0 and id != id_normal:
+                                    target = np.mean(row[np.where(label_full==id)], axis=0)
+                                    row_scores = AD_model(row, bg, target)
+                                    if flag_subsample:
+                                        row_scores = row_scores.repeat(2, axis=0).repeat(2, axis=1)[:H, :W]
+                                    temp_scores[i-1] = row_scores
+                            scores[r] = np.max(temp_scores, axis=0)
+                            target = np.mean(row[np.where(np.logical_or((label_full==0), (label_full==id_normal)))], axis=0)
+                            row_scores = AD_model(row, bg, target)
+                            if flag_subsample:
+                                row_scores = row_scores.repeat(2, axis=0).repeat(2, axis=1)[:H, :W]
+                            scores_binary[r] = 1 - (row_scores - np.max(row_scores))/(np.max(row_scores) - np.min(row_scores))
+                        row_computed = True
+                    except RuntimeError as e:
+                        print(f"Error running model {model} on GPU for row {r}: {e}")
+                        print("Falling back to CPU execution.")
+                        AD_model.gpu=False
+                # Reset stats for new data
+                AD_model.set_mean_N(None)
+                AD_model.set_cov(None)
+
+                times[r] = time.time() - start_time
         logging_dict["Runtime"] = times
         logging_dict["GPU execution"] = run_gpu
 
@@ -198,6 +258,11 @@ if __name__ == "__main__":
                         "Label_ids": labels_ids,
                         "Scores": scores,
                         "Scores_binary": scores_binary,
+                        "Subsamples": subsamples_per_row,
+                        "Background_pixels": background_pixels_per_row,
+                        "Background_indices": background_indices_per_row,
+                        "Background_mean": background_mean_per_row,
+                        "Background_covariance": background_cov_per_row,
                         "Model_configs": model_configs,
                         "Background_configs": {args.background_config: background_config} if background_config is not None else None,
                         "Experiment_configs": experiment_settings,
