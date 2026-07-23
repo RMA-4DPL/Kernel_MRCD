@@ -111,6 +111,7 @@ class MCD():
         if X.ndim > 2:
            X = X.reshape((-1, X.shape[-1]))
         model = MinCovDet(support_fraction = self.support_fraction, random_state = np.random.RandomState(4)).fit(X)
+        self.support_indices = np.flatnonzero(model.support_)
 
         return model.location_, model.covariance_
 
@@ -586,6 +587,7 @@ class MRCD():
         assert best is not None
 
         best_indices, _, _, _, _, best_start = best
+        self.support_indices = best_indices
         subset = working[best_indices]
         working_center = np.mean(subset, axis=0)
         centered_subset = subset - working_center
