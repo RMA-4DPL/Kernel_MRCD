@@ -10,12 +10,13 @@ import matplotlib.pyplot as plt
 from helper_functions import create_save_dir_name, load_dataset, normalize_data, clip_and_normalize_data
 
 MAX_SCENE_COLS = 6
-DATASET_LIST = ['HYDICE', 'Salinas_A', 
-           'ABU_beach_3', 'ABU_airport_4', 'ABU_urban_3', 'ABU_beach_2', 'ABU_urban_1', 
-           'ABU_airport_1', 'ABU_airport_2', 'ABU_airport_3', 'ABU_urban_4', 'ABU_urban_5', 'ABU_urban_2', 
-           'ABU_beach_4', 'ABU_beach_1',
-           'Indiana', 'Salinas', 'WHU-HI', 'SanDiego', 'cooke_city', 'PaviaU']
-MODEL_LIST = ['sample' 'ledoit_wolf' 'shrinkage_0.1' 'diagonal_0.1' 'mrcd_auto_0.75_equicorrelation' 'kmrcd_0.75_rbf']
+# DATASET_LIST = ['HYDICE', 
+#            'ABU_beach_3', 'ABU_airport_4', 'ABU_urban_3', 'ABU_beach_2', 'ABU_urban_1', 
+#            'ABU_airport_1', 'ABU_airport_2', 'ABU_airport_3', 'ABU_urban_4', 'ABU_urban_5', 'ABU_urban_2', 
+#            'ABU_beach_4', 'ABU_beach_1',
+#            'Indiana', 'Salinas', 'WHU-HI', 'cooke_city']
+DATASET_LIST = ['Pavia', 'PaviaU', 'Salinas', 'WHU-HI']
+MODEL_LIST = ['sample', 'ledoit_wolf', 'mrcd_auto_0.75_identity', 'mrcd_auto_0.75_equicorrelation', 'kmrcd_0.75_rbf']
 
 base_filepath_configs = pathlib.Path(__file__).parent.resolve()
 base_filepath = "/mnt/userdata/MaMe/SSDdata/Kernel_MRCD"
@@ -25,12 +26,12 @@ argument_parser = argparse.ArgumentParser(
     description='Combine the classical (RX/AMF/ACE) model results and visualizations across multiple '
                 'datasets for one fixed scaler/scaling_scope setting (see Process_results.py and '
                 'Visualize_classical_results.py, which must have already been run for each dataset).')
-argument_parser.add_argument('--datasets', type=str, nargs='+', default=None, help='Datasets to combine (default: auto-discover every dataset under the Results directory that has a summary for the given scaler/scaling_scope)')
-argument_parser.add_argument('--models', type=str, nargs='+', default=None, help='Models to include (default: every model found across the selected datasets)')
+argument_parser.add_argument('--datasets', type=str, nargs='+', default=DATASET_LIST, help='Datasets to combine (default: auto-discover every dataset under the Results directory that has a summary for the given scaler/scaling_scope)')
+argument_parser.add_argument('--models', type=str, nargs='+', default=MODEL_LIST, help='Background models to include, matched against the "{model_name}_{background_model}" result directory suffix (e.g. sample, ledoit_wolf, mrcd_auto_0.75_identity); pass nothing/None to include every background model found')
 argument_parser.add_argument('--scaler', type=str, default='Standard', help='Scaler name (must match Process_results.py)')
-argument_parser.add_argument('--scaling_scope', type=str, default='per_sample', choices=['global', 'per_sample'], help='Scaling scope for the Scaler (must match Process_results.py)')
+argument_parser.add_argument('--scaling_scope', type=str, default='per_sample', choices=['global', 'per_sample', 'all'], help='Scaling scope for the Scaler (must match Process_results.py)')
 argument_parser.add_argument('--subsample', type=str, default='random', help='Subsampling method (must match Process_results.py/main.py)')
-argument_parser.add_argument('--subsample_amount', type=int, default=1000, help='Amount of data points sampled (must match Process_results.py/main.py)')
+argument_parser.add_argument('--subsample_amount', type=int, default=10000, help='Amount of data points sampled (must match Process_results.py/main.py)')
 args = argument_parser.parse_args()
 
 print('Loading yaml config')
@@ -76,13 +77,17 @@ if args.subsample != 'none':
 os.makedirs(combined_save_dir, exist_ok=True)
 
 
-def select_models(available_models, requested_models):
-    if requested_models is None:
+def select_models(available_models, requested_backgrounds):
+    # Result directories are named "{model_name}_{background_model}" (see create_save_dir_name),
+    # e.g. "base_rx_sample" or "base_amf_mrcd_auto_0.75_identity". requested_backgrounds selects
+    # by that background_model suffix, keeping every detector (rx/amf/ace, ...) that uses it.
+    if requested_backgrounds is None:
         return available_models
-    missing = [m for m in requested_models if m not in available_models]
+    selected = [m for m in available_models if any(m.endswith(f"_{bg}") for bg in requested_backgrounds)]
+    missing = [bg for bg in requested_backgrounds if not any(m.endswith(f"_{bg}") for m in available_models)]
     if missing:
-        print(f"Warning: requested models not found and will be skipped: {missing}")
-    return [m for m in requested_models if m in available_models]
+        print(f"Warning: requested background models not found and will be skipped: {missing}")
+    return selected
 
 
 def parse_mean_std(series):
@@ -215,7 +220,7 @@ for dataset in datasets_found:
         continue
 
     raw_data, _, label_array, label_ids, wavelengths = load_dataset(base_path=base_filepath, dataset_name=dataset)
-    bgr_targets = [495, 555, 760]  # approximate blue/green/red wavelengths (nm)
+    bgr_targets = [470, 540, 690]  # approximate blue/green/red wavelengths (nm)
     b_idx, g_idx, r_idx = [np.argmin(np.abs(wavelengths - t)) for t in bgr_targets]
     visual = np.stack([
         normalize_data(raw_data[0, :, :, r_idx]),
@@ -233,7 +238,9 @@ for dataset in datasets_found:
         ax = axes[idx // ncols, idx % ncols]
         if img.shape[-1]==3:
             img=img.squeeze()
-        ax.imshow(img, cmap=cmap)
+        im = ax.imshow(normalize_data(img), cmap=cmap)
+        if img.shape[-1]!=3:
+            fig.colorbar(im, ax=ax)
         ax.set_title(title, fontsize=8)
         ax.axis('off')
     for idx in range(len(panels), nrows * ncols):

@@ -14,7 +14,7 @@ import scipy.io
 
 
 argument_parser = argparse.ArgumentParser(description='Data exploration for KMRCD')
-argument_parser.add_argument('--dataset', type=str, default='ABU_urban_4', help='Select which dataset to load (default:Salinas).')
+argument_parser.add_argument('--dataset', type=str, default='PaviaU', help='Select which dataset to load (default:Salinas).')
 args = argument_parser.parse_args()
 
 np.random.seed(4)
@@ -31,7 +31,7 @@ if len(corrected_data.shape)>3:
 if len(labels.shape)>2:
     labels=labels.squeeze()
 
-BGR = [495, 555, 760]
+BGR = [470, 540, 690]
 BGR_indices = [np.argmin(np.abs(wavelengths - target)) for target in BGR]
 BGR_wavelengths = wavelengths[BGR_indices]
 
@@ -94,4 +94,19 @@ ax2.set_title('Average spectrum per class (Salinas corrected)')
 ax2.legend(loc='center left', bbox_to_anchor=(1.0, 0.5), fontsize=8)
 plt.tight_layout()
 fig2.savefig(os.path.join(figure_filepath, args.dataset, 'average_spectrum_per_class.png'), dpi=150)
+plt.show()
+
+scaled_data = (corrected_data - np.mean(corrected_data, axis=(0,1)))/np.std(corrected_data, axis=(0,1))
+fig2, ax2 = plt.subplots(figsize=(12, 7))
+colors = plt.cm.tab20(np.linspace(0, 1, len(class_ids)))
+for color, class_id in zip(colors, class_ids):
+    spectra = scaled_data[labels == class_id]
+    ax2.plot(spectral_wavelengths, spectra.mean(axis=0), label=labels_ids[class_id][0], color=color)
+
+ax2.set_xlabel('Wavelength (nm)')
+ax2.set_ylabel('Reflectance')
+ax2.set_title('Average spectrum per class (Salinas corrected)')
+ax2.legend(loc='center left', bbox_to_anchor=(1.0, 0.5), fontsize=8)
+plt.tight_layout()
+fig2.savefig(os.path.join(figure_filepath, args.dataset, 'scaled_average_spectrum_per_class.png'), dpi=150)
 plt.show()
