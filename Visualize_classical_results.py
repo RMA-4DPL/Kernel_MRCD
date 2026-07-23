@@ -14,11 +14,11 @@ base_filepath_results = os.path.join(base_filepath, 'Results')
 
 argument_parser = argparse.ArgumentParser(
     description='Visualize the classical (RX/AMF/ACE) model results produced by Process_results.py')
-argument_parser.add_argument('--dataset', type=str, default='Salinas', help='Select which dataset to load (default: Salinas; must match Process_results.py)')
+argument_parser.add_argument('--dataset', type=str, default='PaviaU', help='Select which dataset to load (default: Salinas; must match Process_results.py)')
 argument_parser.add_argument('--scaler', type=str, default='Standard', help='Scaler name (overrides experiment_settings Scaler; must match Process_results.py)')
-argument_parser.add_argument('--scaling_scope', type=str, default='per_sample', choices=['global', 'per_sample'], help='Scaling scope for the Scaler (overrides experiment_settings Scaler scaling_scope; must match Process_results.py)')
-argument_parser.add_argument('--subsample', type=str, default='none', help='Subsampling method (must match Process_results.py/main.py)')
-argument_parser.add_argument('--subsample_amount', type=int, default=1000, help='Amount of data points sampled (must match Process_results.py/main.py)')
+argument_parser.add_argument('--scaling_scope', type=str, default='per_sample', choices=['global', 'per_sample', 'all'], help='Scaling scope for the Scaler (overrides experiment_settings Scaler scaling_scope; must match Process_results.py)')
+argument_parser.add_argument('--subsample', type=str, default='random', help='Subsampling method (must match Process_results.py/main.py)')
+argument_parser.add_argument('--subsample_amount', type=int, default=10000, help='Amount of data points sampled (must match Process_results.py/main.py)')
 args = argument_parser.parse_args()
 
 print('Loading yaml config')
@@ -197,6 +197,80 @@ def build_scene_and_histograms(models, score_key, raw_visual, label_array, label
     plt.close(fig)
 
 
+def build_background_visualization(models, raw_visual, label_array, out_path):
+    """Per model: background mean spectrum, covariance heatmap, the stacked background
+    vectors themselves, and a spatial mask of the pixels selected as background
+    (Background_indices from main.py, row 0 -- scene is single-row)."""
+    H, W = label_array[0].shape
+    rows = []
+    for model in models:
+        pickle_path = os.path.join(summary_save_dir, model, "Raw_results.pickle")
+        if not os.path.exists(pickle_path):
+            print(f"Skipping {model} in background visualization: {pickle_path} not found.")
+            continue
+        with open(pickle_path, "rb") as f:
+            x = pickle.load(f)
+        mean = x.get("Background_mean")
+        cov = x.get("Background_covariance")
+        pixels = x.get("Background_pixels")
+        indices = x.get("Background_indices")
+        subsamples = x.get("Subsamples")
+        subsample_name = x.get("Experiment_configs", {}).get("Subsample", {}).get("name", "none")
+        del x
+        if not mean or not cov or not pixels or not indices:
+            print(f"Skipping {model} in background visualization: no background mean/covariance/pixels/indices found.")
+            continue
+        indices_row = np.asarray(indices[0])
+        # Background_pixels holds every candidate pixel considered; Background_indices selects
+        # which of those were actually used to fit mean/covariance -- stack just those into an
+        # (n_samples, n_features) matrix of the background vectors themselves.
+        background_vectors = np.asarray(subsamples[0])[indices_row]
+        rows.append((model, np.asarray(mean[0]), np.asarray(cov[0]), background_vectors, indices_row, subsample_name))
+
+    if not rows:
+        print("No background mean/covariance found; skipping background visualization.")
+        return
+
+    fig, axes = plt.subplots(len(rows), 4, figsize=(18, 4 * len(rows)), squeeze=False)
+    for row_i, (model, mean, cov, background_vectors, indices, subsample_name) in enumerate(rows):
+        ax_mean, ax_cov, ax_vectors, ax_mask = axes[row_i]
+
+        ax_mean.plot(mean)
+        ax_mean.set_title(f"{model}: background mean")
+        ax_mean.set_xlabel("Band")
+        ax_mean.set_ylabel("Value")
+
+        cov_bound = np.max(np.abs(cov)) or 1.0
+        im = ax_cov.imshow(cov, cmap='coolwarm', vmin=-cov_bound, vmax=cov_bound)
+        ax_cov.set_title(f"{model}: background covariance")
+        fig.colorbar(im, ax=ax_cov, fraction=0.046, pad=0.04)
+
+        im_vec = ax_vectors.imshow(np.clip(background_vectors, np.percentile(background_vectors, 0.05), np.percentile(background_vectors, 99.5)), aspect='auto', cmap='viridis')
+        ax_vectors.set_title(f"{model}: background vectors ({background_vectors.shape[0]} x {background_vectors.shape[1]})")
+        ax_vectors.set_xlabel("Band")
+        ax_vectors.set_ylabel("Sample")
+        fig.colorbar(im_vec, ax=ax_vectors, fraction=0.046, pad=0.04)
+
+        # Background_indices only index directly into the (H, W) grid when the background was
+        # drawn from the full, unsampled row -- see the "Subsample" branch in main.py.
+        if subsample_name == 'none' and indices.ndim == 1 and indices.size and indices.max() < H * W:
+            mask = np.zeros(H * W, dtype=bool)
+            mask[indices] = True
+            mask = mask.reshape(H, W)
+            ax_mask.imshow(raw_visual)
+            overlay = np.zeros((H, W, 4))
+            overlay[mask] = [1, 0, 0, 0.6]
+            ax_mask.imshow(overlay)
+            ax_mask.set_title(f"{model}: background pixels ({mask.sum()} / {H * W})")
+        else:
+            ax_mask.set_title(f"{model}: background pixel map unavailable\n(subsample={subsample_name})")
+        ax_mask.set_xticks([])
+        ax_mask.set_yticks([])
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+
+
 # --- Metric comparison, percentage correct, and per-sample distributions ---
 plot_metrics_comparison(metrics_df, models, metrics_to_calc, "Classical model (RX/AMF/ACE) metric comparison",
                          os.path.join(summary_save_dir, "Classical_metrics_comparison.png"))
@@ -228,13 +302,13 @@ else:
 print("Building scene visualization")
 raw_data, data_array, label_array, label_ids, wavelengths = load_dataset(base_path=base_filepath, dataset_name=args.dataset)
 
-bgr_targets = [495, 555, 760]  # approximate blue/green/red wavelengths (nm)
+bgr_targets = [470, 540, 690]  # approximate blue/green/red wavelengths (nm)
 b_idx, g_idx, r_idx = [np.argmin(np.abs(wavelengths - t)) for t in bgr_targets]
 visual = np.stack([
     normalize_data(raw_data[0, :, :, r_idx]),
     normalize_data(raw_data[0, :, :, g_idx]),
     normalize_data(raw_data[0, :, :, b_idx]),
-], axis=-1)
+], axis=-1).squeeze()
 
 build_scene_and_histograms(
     models, "Scores", visual, label_array, label_ids,
@@ -250,5 +324,13 @@ if models_binary:
         os.path.join(summary_save_dir, "Classical_scene_visualization_binary.png"),
         os.path.join(summary_save_dir, "Classical_score_histograms_binary.png"),
         "No classical model binary results found; skipping binary scene visualization.")
+
+# --- Background statistics: mean spectrum, covariance, and selected background pixels ---
+# The background estimate is computed once per model (shared between Scores and Scores_binary),
+# so this only needs to run over `models`, not `models_binary`.
+print("Building background visualization")
+build_background_visualization(
+    models, visual, label_array,
+    os.path.join(summary_save_dir, "Classical_background_visualization.png"))
 
 print(f"Saved visualizations to {summary_save_dir}")
