@@ -33,6 +33,7 @@ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR
 THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
 
+import os
 from types import SimpleNamespace
 from concurrent.futures import ThreadPoolExecutor
 
@@ -40,6 +41,7 @@ import numpy as np
 from scipy.optimize import brentq
 from scipy.stats import norm
 from scipy.linalg import cho_factor, cho_solve
+from threadpoolctl import threadpool_limits
 
 from .kernels import LinKernel, RbfKernel, AutoRbfKernel
 from . import utils
@@ -67,27 +69,12 @@ class Kernel_MRCD:
         K = self.kernel.compute(x, x)
 
         # Grab observation ranking from initial estimators
-        # solutions = [
-        #     SimpleNamespace(name="SDO", outlyingness_indices=utils.sdo(K, self.alpha)),
-        #     SimpleNamespace(name="SpatialRank", outlyingness_indices=utils.spatial_rank(K, self.alpha)),
-        #     SimpleNamespace(name="SpatialMedian", outlyingness_indices=utils.spatial_median_estimator(K, self.alpha)),
-        #     SimpleNamespace(name="SSCM", outlyingness_indices=utils.sscm(K)),
-        # ]
-        # The four estimators are independent (each only reads K/alpha), so run
-        # them concurrently; numpy/scipy linalg calls release the GIL, so
-        # threads (not processes) are enough to get real overlap.
-        estimator_specs = [
-            ("SDO", utils.sdo, (K, self.alpha)),
-            ("SpatialRank", utils.spatial_rank, (K, self.alpha)),
-            ("SpatialMedian", utils.spatial_median_estimator, (K, self.alpha)),
-            ("SSCM", utils.sscm, (K,)),
+        solutions = [
+            SimpleNamespace(name="SDO", outlyingness_indices=utils.sdo(K, self.alpha)),
+            SimpleNamespace(name="SpatialRank", outlyingness_indices=utils.spatial_rank(K, self.alpha)),
+            SimpleNamespace(name="SpatialMedian", outlyingness_indices=utils.spatial_median_estimator(K, self.alpha)),
+            SimpleNamespace(name="SSCM", outlyingness_indices=utils.sscm(K)),
         ]
-        with ThreadPoolExecutor(max_workers=len(estimator_specs)) as executor:
-            futures = [executor.submit(fn, *args) for _, fn, args in estimator_specs]
-            solutions = [
-                SimpleNamespace(name=name, outlyingness_indices=future.result())
-                for (name, _, _), future in zip(estimator_specs, futures)
-            ]
 
         scfac = utils.mcd_cons(p, self.alpha)
         h = int(np.ceil(n * self.alpha))
@@ -157,9 +144,12 @@ class Kernel_MRCD:
         #         sol.obj = np.sum(np.log(sigma))
         #         sol.smd = smd
         #     #assert converged, "no C-step convergence"
-        # The per-solution C-step refinement is independent across solutions
-        # (each only reads K/Ktt_diag/rho/scfac and mutates its own sol), so
-        # run all 4 concurrently the same way as the initial estimators above.
+        # The 4 solutions' C-step refinements are independent (each only reads
+        # K/Ktt_diag/rho/scfac and mutates its own sol), so run them
+        # concurrently. threadpool_limits caps each thread's BLAS calls to
+        # cpu_count/n_workers so the threads share the machine instead of
+        # oversubscribing it (a naive, unguarded attempt at this was slower
+        # than sequential).
         def _refine_solution(sol):
             converged = False
             new_hsubset = None
@@ -204,8 +194,10 @@ class Kernel_MRCD:
                 # print(f"No convergence for {sol.name}")
             #assert converged, "no C-step convergence"
 
-        with ThreadPoolExecutor(max_workers=len(solutions)) as executor:
-            list(executor.map(_refine_solution, solutions))
+        per_worker_threads = max(1, (os.cpu_count() or 1) // len(solutions))
+        with threadpool_limits(limits=per_worker_threads):
+            with ThreadPoolExecutor(max_workers=len(solutions)) as executor:
+                list(executor.map(_refine_solution, solutions))
 
         # Select the solution with the lowest objective function ...
         solution = min(solutions, key=lambda s: s.obj)
