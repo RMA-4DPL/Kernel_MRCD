@@ -5,7 +5,7 @@ def subsample_data_random(X, n_samples=1000, random_seed=4):
     np.random.seed(random_seed)
     H, W, B = X.shape
     X_t = X.reshape((-1, B))
-    random_inds = np.random.choice(np.arange(len(X_t)), size=n_samples, replace=False)
+    random_inds = np.random.choice(np.arange(len(X_t)), size=np.minimum(len(X_t),n_samples), replace=False)
     subsampled_data = X_t[random_inds]
 
     return subsampled_data
