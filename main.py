@@ -1,12 +1,7 @@
 import numpy as np
-import matplotlib.pyplot as plt
-import pandas as pd
-import cv2
 import os
 import yaml
 from tqdm import tqdm
-from concurrent.futures import ThreadPoolExecutor
-import copy
 from AD_models_GPU import create_AD_model
 from Preproc import PreprocPipeline
 from helper_functions import load_dataset, create_save_dir_name
@@ -14,12 +9,18 @@ from Background_selection import select_background_model
 from subsampler import get_subsampler
 from kernels import get_kernel
 import pickle
-from multiprocessing import cpu_count
 import pathlib
 import torch
 import random
 import time
-import argparse 
+import argparse
+
+
+def _upsample_scores(row_scores, flag_subsample, target_h, target_w):
+    if not flag_subsample:
+        return row_scores
+    return row_scores.repeat(2, axis=0).repeat(2, axis=1)[:target_h, :target_w]
+
 
 if __name__ == "__main__":
 
@@ -37,7 +38,7 @@ if __name__ == "__main__":
 
     argument_parser = argparse.ArgumentParser(description='Process results of AD models')
     argument_parser.add_argument('--dataset', type=str, default='Salinas', help='Select which dataset to load (default:Salinas).')
-    argument_parser.add_argument('--model', type=str, default='base_amf', required=False, help='Name of the model to process')   
+    argument_parser.add_argument('--model', type=str, default='base_amf', required=False, help='Name of the model to process')
     argument_parser.add_argument('--retrain', action='store_true', help='Retrain the model if specified')
     argument_parser.set_defaults(retrain=False)
     argument_parser.add_argument('--recalculate_background', action='store_true', help='Recompute background statistics (subsamples, indices, mean/cov) without recomputing scores; reuses scores from an existing Raw_results.pickle.')
@@ -69,22 +70,20 @@ if __name__ == "__main__":
     model_configs = {args.model: model_configs[args.model]}
     with open(os.path.join(local_filepath, "background_configs.yaml"), "r") as f:
         background_configs = yaml.safe_load(f)
-    experiment_settings = {}
-    for arg in vars(args):
-        experiment_settings[arg] = getattr(args, arg)
+    experiment_settings = dict(vars(args))
     if args.scaler is not None:
-        experiment_settings.setdefault('Scaler', {})['name'] = args.scaler
+        scaler_settings = experiment_settings.setdefault('Scaler', {})
+        scaler_settings['name'] = args.scaler
         if args.scaling_scope is not None:
-            experiment_settings.setdefault('Scaler', {})['scaling_scope'] = args.scaling_scope
+            scaler_settings['scaling_scope'] = args.scaling_scope
     if args.subsample is not None:
-        experiment_settings.setdefault('Subsample', {})['name'] = args.subsample
-        experiment_settings.setdefault('Subsample', {})['amount'] = args.subsample_amount
-        
+        subsample_settings = experiment_settings.setdefault('Subsample', {})
+        subsample_settings['name'] = args.subsample
+        subsample_settings['amount'] = args.subsample_amount
+
     retrain = args.retrain
 
-    model = list(model_configs.keys())[0]
-    config = list(model_configs.values())[0]
-
+    model, config = next(iter(model_configs.items()))
 
     background_config = None
     background_model_name = experiment_settings['background_model']
@@ -93,7 +92,6 @@ if __name__ == "__main__":
         background_model_name = background_config['model_name']
         experiment_settings['background_model'] = args.background_config
 
-    
     save_dir = create_save_dir_name(base_filepath_results, model, experiment_settings)
     os.makedirs(save_dir, exist_ok=True)
     raw_results_path = os.path.join(save_dir, "Raw_results.pickle")
@@ -130,7 +128,7 @@ if __name__ == "__main__":
 
         print("Performing calculations")
         logging_dict = {}
-        
+
         background_model = select_background_model(background_model_name)
         if background_config is not None and hasattr(background_model, 'load_config'):
             print(f"Loading {args.background_config} background config")
@@ -144,7 +142,7 @@ if __name__ == "__main__":
             print(f"Loading {model} config")
             AD_model.load_config(config)
 
-        per_label_ids = [id for id in labels_ids if id != 0] if model != 'base_rx' else None
+        per_label_ids = [label_id for label_id in labels_ids if label_id != 0] if model != 'base_rx' else None
         scores_shape = (L, len(per_label_ids), H, W) if per_label_ids is not None else (L, H, W)
         if cached_results is not None:
             scores = cached_results["Scores"]
@@ -224,25 +222,22 @@ if __name__ == "__main__":
                     try:
                         if model=='base_rx': # Try to run the model on GPU, if it fails, fall back to CPU execution
                             row_scores = AD_model(row, bg)
-                            if flag_subsample:
-                                row_scores = row_scores.repeat(2, axis=0).repeat(2, axis=1)[:H, :W]
+                            row_scores = _upsample_scores(row_scores, flag_subsample, H, W)
                             scores[r] = row_scores
                             scores_binary[r] = scores[r]
                         else:
                             label_full = label_array[r][::2,::2] if flag_subsample else label_array[r]
                             temp_scores = np.zeros((len(labels_ids)-1, H, W))
-                            for i, id in enumerate(labels_ids):
-                                if id != 0 and id != id_normal:
-                                    target = np.mean(row[np.where(label_full==id)], axis=0)
+                            for i, label_id in enumerate(labels_ids):
+                                if label_id != 0 and label_id != id_normal:
+                                    target = np.mean(row[np.where(label_full==label_id)], axis=0)
                                     row_scores = AD_model(row, bg, target)
-                                    if flag_subsample:
-                                        row_scores = row_scores.repeat(2, axis=0).repeat(2, axis=1)[:H, :W]
+                                    row_scores = _upsample_scores(row_scores, flag_subsample, H, W)
                                     temp_scores[i-1] = row_scores
                             scores[r] = temp_scores
                             target = np.mean(row[np.where(np.logical_or((label_full==0), (label_full==id_normal)))], axis=0)
                             row_scores = AD_model(row, bg, target)
-                            if flag_subsample:
-                                row_scores = row_scores.repeat(2, axis=0).repeat(2, axis=1)[:H, :W]
+                            row_scores = _upsample_scores(row_scores, flag_subsample, H, W)
                             scores_binary[r] = 1 - (row_scores - np.max(row_scores))/(np.max(row_scores) - np.min(row_scores))
                         row_computed = True
                     except RuntimeError as e:
@@ -278,4 +273,3 @@ if __name__ == "__main__":
             yaml.safe_dump(experiment_settings, f)
     else:
         print(f"{model} has already been processed, skipping.")
-    pass
