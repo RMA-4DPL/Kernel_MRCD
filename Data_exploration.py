@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 import pandas as pd
 import cv2
 import os
@@ -14,7 +15,7 @@ import scipy.io
 
 
 argument_parser = argparse.ArgumentParser(description='Data exploration for KMRCD')
-argument_parser.add_argument('--dataset', type=str, default='PaviaU', help='Select which dataset to load (default:Salinas).')
+argument_parser.add_argument('--dataset', type=str, default='WHU-HI', help='Select which dataset to load (default:Salinas).')
 args = argument_parser.parse_args()
 
 np.random.seed(4)
@@ -61,8 +62,15 @@ fig, axes = plt.subplots(6, 2, figsize=(8, 20))
 
 axes[0, 0].imshow(bgr_composite(data, raw_bgr_idx))
 axes[0, 0].set_title('Raw BGR composite')
-axes[0, 1].imshow(labels, cmap='nipy_spectral')
+
+label_ids_present = sorted(np.unique(labels).astype(int).tolist())
+labels_cmap = plt.get_cmap('nipy_spectral')
+labels_norm = plt.Normalize(vmin=min(label_ids_present), vmax=max(label_ids_present))
+axes[0, 1].imshow(labels, cmap=labels_cmap, norm=labels_norm)
 axes[0, 1].set_title('Labels')
+label_patches = [mpatches.Patch(color=labels_cmap(labels_norm(label_id)), label=labels_ids[label_id][0])
+                 for label_id in label_ids_present]
+axes[0, 1].legend(handles=label_patches, loc='center left', bbox_to_anchor=(1.05, 0.5), fontsize=6)
 
 for row in range(1, 6):
     raw_band = raw_above_idx[row - 1]

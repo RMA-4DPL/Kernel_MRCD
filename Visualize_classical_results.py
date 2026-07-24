@@ -135,6 +135,8 @@ def build_scene_and_histograms(models, score_key, raw_visual, label_array, label
             x = pickle.load(f)
         scores = x.get(score_key)
         if scores is not None:
+            if scores.ndim == 4:  # (L, num_labels, H, W) for per-target models (AMF/ACE) -- combine for display
+                scores = np.max(scores, axis=1)
             model_scores[model] = clip_and_normalize_data(scores[0])
         del x
 
@@ -271,6 +273,70 @@ def build_background_visualization(models, raw_visual, label_array, out_path):
     plt.close(fig)
 
 
+# Only per-target models (AMF/ACE, i.e. those with 4D Scores) reach build_per_label_detection_maps;
+# these map a result-directory name ("{model_name}_{background_model}", see create_save_dir_name)
+# to its AD model (fixed row order below) and its background model (for per-figure filenames).
+AD_MODEL_PREFIXES = {'base_amf_': 'AMF', 'base_ace_': 'ACE'}
+AD_MODEL_ROW_ORDER = ['AMF', 'ACE']
+
+
+def _split_model_dir(model_dir):
+    for prefix, ad_model in AD_MODEL_PREFIXES.items():
+        if model_dir.startswith(prefix):
+            return ad_model, model_dir[len(prefix):]
+    return model_dir, model_dir
+
+
+def build_per_label_detection_maps(models, label_array, label_ids, out_dir):
+    """For per-target models (AMF/ACE), Scores is (L, num_labels, H, W) -- one detection map
+    per target label (see Scores_per_label_ids in main.py/Process_results.py), rather than the
+    single combined map RX produces. Saves one figure per background model (row 0 -- these
+    scenes are single-row, see build_scene_and_histograms), with AMF and ACE stacked as two rows
+    so the same background model's detectors are compared side by side."""
+    per_background = {}
+    for model in models:
+        pickle_path = os.path.join(summary_save_dir, model, "Raw_results.pickle")
+        if not os.path.exists(pickle_path):
+            print(f"Skipping {model} in per-label detection maps: {pickle_path} not found.")
+            continue
+        with open(pickle_path, "rb") as f:
+            x = pickle.load(f)
+        scores = x.get("Scores")
+        per_label_ids = x.get("Scores_per_label_ids")
+        del x
+        if scores is None or per_label_ids is None or scores.ndim != 4:
+            continue
+        ad_model, background_name = _split_model_dir(model)
+        per_background.setdefault(background_name, {})[ad_model] = (scores[0], list(per_label_ids))
+
+    if not per_background:
+        print("No per-label (AMF/ACE) detection maps found; skipping.")
+        return
+
+    for background_name, ad_models in per_background.items():
+        rows = [ad_model for ad_model in AD_MODEL_ROW_ORDER if ad_model in ad_models]
+        n_labels = max(len(ids) for _, ids in ad_models.values())
+        fig, axes = plt.subplots(len(rows), n_labels, figsize=(3 * n_labels, 3 * len(rows)), squeeze=False)
+        for row_i, ad_model in enumerate(rows):
+            scores_row, per_label_ids = ad_models[ad_model]
+            for col_i in range(n_labels):
+                ax = axes[row_i, col_i]
+                if col_i < len(per_label_ids):
+                    label_id = per_label_ids[col_i]
+                    ax.imshow(clip_and_normalize_data(scores_row[col_i]), cmap='viridis')
+                    if row_i == 0:
+                        ax.set_title(label_ids[label_id][0], fontsize=8)
+                ax.set_xticks([])
+                ax.set_yticks([])
+            axes[row_i, 0].set_ylabel(ad_model, fontsize=10)
+        fig.suptitle(background_name)
+        fig.tight_layout()
+        out_path = os.path.join(out_dir, f"Classical_per_label_detection_maps_{background_name}.png")
+        fig.savefig(out_path)
+        plt.close(fig)
+        print(f"Saved per-label detection maps for {background_name} to {out_path}")
+
+
 # --- Metric comparison, percentage correct, and per-sample distributions ---
 plot_metrics_comparison(metrics_df, models, metrics_to_calc, "Classical model (RX/AMF/ACE) metric comparison",
                          os.path.join(summary_save_dir, "Classical_metrics_comparison.png"))
@@ -332,5 +398,11 @@ print("Building background visualization")
 build_background_visualization(
     models, visual, label_array,
     os.path.join(summary_save_dir, "Classical_background_visualization.png"))
+
+# --- Per-label detection maps: one map per target label for per-target models (AMF/ACE) ---
+# One output file per background model (see build_per_label_detection_maps), since a combined
+# figure could get very wide with many background models x many labels.
+print("Building per-label detection maps (AMF/ACE)")
+build_per_label_detection_maps(models, label_array, label_ids, summary_save_dir)
 
 print(f"Saved visualizations to {summary_save_dir}")
