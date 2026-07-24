@@ -1,17 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-import pandas as pd
-import cv2
 import os
-import yaml
-from tqdm import tqdm
-from concurrent.futures import ThreadPoolExecutor
-import copy
-import pathlib
 from helper_functions import load_dataset
 import argparse
-import scipy.io
 
 
 argument_parser = argparse.ArgumentParser(description='Data exploration for KMRCD')
@@ -19,7 +11,6 @@ argument_parser.add_argument('--dataset', type=str, default='WHU-HI', help='Sele
 args = argument_parser.parse_args()
 
 np.random.seed(4)
-base_filepath = pathlib.Path(__file__).parent.resolve()
 base_filepath = "/mnt/userdata/MaMe/SSDdata/Kernel_MRCD"
 dataset_filepath = os.path.join(base_filepath, 'Dataset', args.dataset)
 figure_filepath = os.path.join(base_filepath, 'Figures')

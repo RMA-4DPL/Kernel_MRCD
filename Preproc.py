@@ -7,19 +7,19 @@ class IARR():
     def transform(self, X):
         """
         Atmospheric correction based on Internal Average Relative Reflectance.
-        
+
         Parameters:
         -----------
         X: ndarray of shape (L, H, W, B)
             An array containing all input hyperspectral image cubes (Height, Width, Bands).
-        
+
         Returns:
         --------
         X: ndarray of shape (L, H, W, B)
             An array containing all hyperspectral image cubes (Height, Width, Bands) with the mean of each band set to 1.
-        
+
         """
-        return X/np.mean(X,axis=(1,2), keepdims=True) 
+        return X/np.mean(X,axis=(1,2), keepdims=True)
 
 class PassThrough():
     def __init__(self):
@@ -40,10 +40,9 @@ def create_AC_model(model_name='IARR'):
 class StandardScaler():
     def __init__(self, scaling_scope='global'):
         self.scaling_scope = scaling_scope
-    
+
     def fit(self, X):
         if self.scaling_scope == 'global':
-            axis_to_reduce = tuple(i for i in range(X.ndim) if i != X.ndim-1)
             self.mean = np.zeros((1,1,1,X.shape[-1]), dtype=np.float32)
             self.std = np.zeros((1,1,1,X.shape[-1]), dtype=np.float32)
             for i in range(X.shape[-1]):
@@ -59,7 +58,7 @@ class StandardScaler():
         else:
             axis_to_reduce = tuple(i for i in range(X.ndim) if i not in (0, X.ndim-1))
             return (X - np.mean(X, axis=axis_to_reduce, keepdims=True)) / np.std(X, axis=axis_to_reduce, keepdims=True)
-    
+
 def select_scaler(scaler_name, scaling_scope='global'):
     scaler_dict = {'Standard': StandardScaler(scaling_scope=scaling_scope),
                    'none': PassThrough()}
@@ -69,12 +68,6 @@ def select_scaler(scaler_name, scaling_scope='global'):
     else:
         print(f"{scaler_name} scaler is not currently supported.")
 
-def subsample_data(X, subsample_factor):
-    if subsample_factor is None:
-        return X
-    else:
-        return X[:,::subsample_factor, ::subsample_factor]
-    
 def scale_vis_bands(X, scale_factor):
     if scale_factor is None:
         return X
@@ -106,8 +99,6 @@ class PreprocPipeline():
 
     def create_preproc_pipeline(self, experiment_settings):
         preproc_pipeline = []
-        # if 'Subsample' in experiment_settings:
-        #     preproc_pipeline.append(lambda X: subsample_data(X, experiment_settings['Subsample']))
         if 'AC_model' in experiment_settings:
             preproc_pipeline.append(create_AC_model(experiment_settings['AC_model']['name']))
         if 'Scaler' in experiment_settings:

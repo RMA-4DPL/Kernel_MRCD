@@ -3,7 +3,6 @@ from sklearn.metrics import roc_auc_score, average_precision_score, jaccard_scor
 import os
 import glob
 import functools
-import cv2
 import scipy.io
 import spectral
 import spectral.io.erdas as erdas
@@ -28,7 +27,7 @@ def calc_metric(y_true, y_pred, metric="AUC"):
         return metric_dict[metric](y_true, y_pred)
     else:
         print(f"{metric} is not currently supported.")
-    
+
 def false_positive(y_true, y_score):
     temp_scores = np.sign(y_score - np.percentile(y_score, 99.5))
     temp_scores[temp_scores<0] = 0
@@ -48,7 +47,7 @@ def load_salinas(dataset_filepath):
     salinas_labels = scipy.io.loadmat(os.path.join(dataset_filepath, 'Salinas_gt.mat'))['salinas_gt']
     salinas_data = salinas_data.astype(np.float32)/256
     salinas_corrected_data = salinas_corrected_data.astype(np.float32)/256
-    
+
     labels_ids = {0: ("Background", 56975),
         1: ("Broccoli_green_weeds_1", 2009),
         2: ("Broccoli_green_weeds_2", 3726),
@@ -396,10 +395,9 @@ def qn_scale_overwrite(a, c=2.219144465985076, axis=0):
 def _qn_1d(x, c, indices=None):
     n = x.shape[0]
     x = x[:, None]
-    
+
     if n == 1:
         return 0.0
-    #indices_row, indices_col = np.triu_indices(n, k=1)
     if indices is None:
         pairwise = np.abs(x - x.T)[~np._core.numeric.greater_equal.outer(np.arange(n, dtype=np.int32),
                                     np.arange(0, n, dtype=np.int32))]
@@ -409,7 +407,6 @@ def _qn_1d(x, c, indices=None):
     k = h * (h - 1) // 2
     pairwise.partition(k-1)
     return c * pairwise[k-1]
-    # return c * np.partition(pairwise, k - 1)[k - 1]
 
 def get_int_dtype(n):
     log2_n = np.log2(n)

@@ -11,8 +11,6 @@ from scipy.stats import rankdata, chi2
 from scipy.special import ndtri
 from scipy.optimize import brentq
 from scipy.linalg import cho_factor, cho_solve
-from sklearn.metrics.pairwise import rbf_kernel
-from sklearn.preprocessing import KernelCenterer
 from KMRCD import Kernel_MRCD
 
 # Set by _ogk_eigenvectors just before forking workers, so children inherit it
@@ -105,7 +103,7 @@ class MCD():
     def custom_code(self, X):
         mean, cov = self.mcd(X)
         return mean, cov
-    
+
     def __call__(self, X):
         from sklearn.covariance import MinCovDet
         if X.ndim > 2:
@@ -131,14 +129,14 @@ class MCD():
             n_support = int(self.support_fraction * n_samples)
         else:
             n_support = min(int(np.ceil(0.5 * (n_samples + n_features + 1))), n_samples)
-        
+
         # 1. Find candidate supports on subsets
         # a. split the set in subsets of size ~ 300
         n_subsets = n_samples // 300
         n_samples_subsets = n_samples // n_subsets
         samples_shuffle = random_state.permutation(n_samples)
         h_subset = int(np.ceil(n_samples_subsets * (n_support / float(n_samples))))
-        
+
         # b. perform a total of 500 trials
         n_trials_tot = 500
         # c. select 10 best (mean, covariance) for each subset
@@ -203,14 +201,14 @@ class MCD():
         return mean, cov
 
     def select_candidates(self, current_subset, h_subset, n_trials, n_best_sub=1, n_iter=10, cov_computation=calc_cov, random_state=None):
-        
+
         if isinstance(n_trials, int):
             run_from_estimates = False
         elif isinstance(n_trials, tuple):
             run_from_estimates = True
             estimates_list = n_trials
             n_trials = estimates_list[0].shape[0]
-        
+
         all_estimates = []
         if not run_from_estimates:
             for j in range(n_trials):
@@ -278,7 +276,7 @@ class MCD():
         # as the loop below will not be entered.
         if np.isinf(det):
             precision = scipy.linalg.pinvh(cov)
-        
+
         previous_det = np.inf
 
         while det < previous_det and remaining_iterations > 0 and not np.isinf(det):
@@ -308,7 +306,7 @@ class MCD():
         # Check if best fit already found (det => 0, logdet => -inf)
         if np.isinf(det):
             results = mean, cov, det, support_indices, dist
-        
+
         # Check convergence
         if np.allclose(det, previous_det):
             # c_step procedure converged
@@ -345,7 +343,7 @@ class MCD():
 
 class MRCD():
     def __init__(self, rho=0.1, alpha=0.75, h=None, target='identity', maxcond=50.0, max_steps=10):
-        
+
         if not 0.5 <= alpha <= 1.0:
             raise ValueError("alpha must be between 0.5 and 1.0")
         if h is not None and (not isinstance(h, int) or h < 1):
@@ -364,7 +362,7 @@ class MRCD():
         self.h = h
         self.maxcond = maxcond
         self.max_steps = max_steps
-        
+
     def __call__(self, N):
         mean, cov = self.rmcd(N)
 
@@ -395,7 +393,7 @@ class MRCD():
         lower_bound = min(0.0, -1.0 / (features - 1) + 0.01)
         correlation = max(correlation, lower_bound)
         return correlation * np.ones((features, features)) + (1.0 - correlation) * np.eye(features)
-    
+
     def equicorrelation_eigensystem(self, target):
         """Return the analytic Helmert eigensystem used by R's ``eigenEQ``."""
         dimension = target.shape[0]
@@ -413,10 +411,10 @@ class MRCD():
             ([1.0 + (dimension - 1) * correlation], np.full(dimension - 1, 1.0 - correlation))
         )
         return eigenvalues, helmert
-    
+
     def _eigenvectors(self, data):
         return np.linalg.eigh(data)[1]
-    
+
     def _ogk_eigenvectors(self, data, n_jobs=20):
         dimensions = data.shape[1]
         matrix = np.eye(dimensions)
@@ -434,7 +432,7 @@ class MRCD():
             matrix[column, row] = covariance
             matrix[row, column] = covariance
         return self._eigenvectors(matrix)
-    
+
     def _initset(self, data, eigenvectors, h, scales=None):
         projected = data @ eigenvectors
         if scales is None:
@@ -446,7 +444,7 @@ class MRCD():
         centered_projection = (data - location) @ eigenvectors
         distances = np.sum((centered_projection / scales) ** 2, axis=1)
         return np.argsort(distances, kind="stable")[:h]
-    
+
     def initial_subsets(self, data, h):
         """Return the six deterministic h-subsets from ``r6pack``."""
         scaled, _, _ = self.standardize(data)
@@ -632,7 +630,7 @@ class MRCD():
             if np.array_equal(updated, indices) or iteration == self.max_steps:
                 return indices, center, covariance, precision, iteration
             indices = updated
-        
+
     def set_rho(self, rho=0.5):
         self.rho = rho
 
@@ -652,7 +650,7 @@ class MRCD():
 
 class KMRCD():
     def __init__(self, alpha=0.75, maxcond=50.0, max_steps=10, kernel_method=None):
-        
+
         if not 0.5 <= alpha <= 1.0:
             raise ValueError("alpha must be between 0.5 and 1.0")
         if max_steps < 1:
@@ -663,14 +661,14 @@ class KMRCD():
         self.maxcond = maxcond
         self.max_steps = max_steps
         self.kernel_method = kernel_method
-        
+
     def __call__(self, N):
         KRMCD_model = Kernel_MRCD(alpha = self.alpha, kernel=self.kernel_method, c_step_iterations_allowed=self.max_steps, maxcond=self.maxcond)
         N_t = N.reshape(-1, N.shape[-1])
         self.solution = KRMCD_model.run_algorithm(N_t)
 
         return self.solution.hsubset_indices
-        
+
 
     def load_config(self, config_dict):
         if 'alpha' in config_dict:
@@ -691,9 +689,8 @@ def select_background_model(background_model="sample"):
                       "MCD": MCD(),
                       "MRCD": MRCD(),
                       "KMRCD": KMRCD()}
-    
+
     if background_model in background_dict:
         return background_dict[background_model]
     else:
         print(f'{background_model} not known.')
-

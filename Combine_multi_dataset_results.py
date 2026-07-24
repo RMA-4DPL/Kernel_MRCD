@@ -10,9 +10,9 @@ import matplotlib.pyplot as plt
 from helper_functions import create_save_dir_name, load_dataset, normalize_data, clip_and_normalize_data
 
 MAX_SCENE_COLS = 6
-# DATASET_LIST = ['HYDICE', 
-#            'ABU_beach_3', 'ABU_airport_4', 'ABU_urban_3', 'ABU_beach_2', 'ABU_urban_1', 
-#            'ABU_airport_1', 'ABU_airport_2', 'ABU_airport_3', 'ABU_urban_4', 'ABU_urban_5', 'ABU_urban_2', 
+# DATASET_LIST = ['HYDICE',
+#            'ABU_beach_3', 'ABU_airport_4', 'ABU_urban_3', 'ABU_beach_2', 'ABU_urban_1',
+#            'ABU_airport_1', 'ABU_airport_2', 'ABU_airport_3', 'ABU_urban_4', 'ABU_urban_5', 'ABU_urban_2',
 #            'ABU_beach_4', 'ABU_beach_1',
 #            'Indiana', 'Salinas', 'WHU-HI', 'cooke_city']
 DATASET_LIST = ['Pavia', 'PaviaU', 'Salinas', 'WHU-HI']

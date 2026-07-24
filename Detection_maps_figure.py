@@ -1,13 +1,11 @@
 import os
 import pickle
-import pathlib
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap, BoundaryNorm
 from helper_functions import create_save_dir_name, load_dataset, normalize_data, clip_and_normalize_data
 
-base_filepath_configs = pathlib.Path(__file__).parent.resolve()
 base_filepath = "/mnt/userdata/MaMe/SSDdata/Kernel_MRCD"
 base_filepath_results = os.path.join(base_filepath, 'Results')
 
@@ -79,11 +77,8 @@ axes[0].imshow(rgb_composite)
 
 axes[1].imshow(remapped_labels, cmap=label_cmap, norm=label_norm)
 
-im_c = axes[2].imshow(scores_sample, cmap='viridis', vmin=0, vmax=1)
-# fig.colorbar(im_c, ax=axes[1, 0], fraction=0.046, pad=0.04)
-
-im_d = axes[3].imshow(scores_kmrcd, cmap='viridis', vmin=0, vmax=1)
-# fig.colorbar(im_d, ax=axes[1, 1], fraction=0.046, pad=0.04)
+axes[2].imshow(scores_sample, cmap='viridis', vmin=0, vmax=1)
+axes[3].imshow(scores_kmrcd, cmap='viridis', vmin=0, vmax=1)
 
 panel_labels = ["(a)", "(b)", "(c)", "(d)"]
 for ax, label in zip(axes.ravel(), panel_labels):
@@ -91,7 +86,6 @@ for ax, label in zip(axes.ravel(), panel_labels):
     ax.set_yticks([])
     ax.set_xlabel(label, fontsize=15)
 
-#fig.suptitle(f"{args.dataset}: detection maps")
 fig.tight_layout()
 
 out_path = args.out or os.path.join(summary_save_dir, f"Detection_maps_{args.kmrcd_config}.png")

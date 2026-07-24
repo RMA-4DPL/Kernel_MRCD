@@ -25,7 +25,6 @@ argument_parser.add_argument('--subsample_amount', type=int, default=10000, help
 argument_parser.add_argument('--models', type=str, nargs='+', default=MODEL_LIST, help='Background models to include, matched against the "{model_name}_{background_model}" result directory suffix (e.g. sample, ledoit_wolf, mrcd_auto_0.75_identity); default (None) includes every background model found')
 args = argument_parser.parse_args()
 
-local_filepath = pathlib.Path(__file__).parent.resolve()
 base_filepath = "/mnt/userdata/MaMe/SSDdata/Kernel_MRCD"
 base_filepath_results = os.path.join(base_filepath, 'Results')
 
@@ -169,7 +168,7 @@ def summarize(metric_dict, perc_correct_dict):
         temp_mean = np.nanmean(temp, axis=0)
         temp_std = np.nanstd(temp, axis=0)
         if len(temp)==1:
-            perc_summary[model] = [f"{temp_mean[i]:.3f}" for i in range(len(temp_mean))] 
+            perc_summary[model] = [f"{temp_mean[i]:.3f}" for i in range(len(temp_mean))]
         else:
             perc_summary[model] = [f"{temp_mean[i]:.3f} ± {temp_std[i]:.3f}" for i in range(len(temp_mean))]
     return metrics_summary, perc_summary
@@ -392,7 +391,6 @@ for model in model_dirs:
                 models_found_binary += 1
     except Exception as e:
         print(f"Error processing model {model}: {e}")
-        pass
 
 
 # Generate result summary
@@ -410,14 +408,6 @@ else:
     for path in (detailed_path, summary_path):
         if os.path.exists(path):
             os.remove(path)
-
-    # with pd.ExcelWriter(os.path.join(save_dir, detailed_filename), engine='xlsxwriter') as writer:
-    #     for m in metrics_to_calc:
-    #         metric_df = pd.DataFrame.from_dict(metric_dict[m], orient='index', columns=col_names_metric)
-    #         metric_df.to_excel(writer, sheet_name=m, index=True)
-    #     for key in perc_correct_dict:
-    #         perc_correct_df = pd.DataFrame(perc_correct_dict[key], index=col_names_metric, columns=category_names)
-    #         perc_correct_df.to_excel(writer, sheet_name=f"PC {key}", index=True)
 
     with pd.ExcelWriter(summary_path, engine='xlsxwriter') as writer:
         metric_df = pd.DataFrame.from_dict(metrics_summary, orient='index', columns=metrics_to_calc_all)
