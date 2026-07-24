@@ -11,6 +11,9 @@ import argparse
 base_filepath_configs = pathlib.Path(__file__).parent.resolve()
 np.random.seed(4)
 
+#MODEL_LIST = ['sample', 'ledoit_wolf', 'mrcd_auto_0.75_identity', 'kmrcd_0.75_rbf']
+MODEL_LIST = ['mrcd_auto_0.75_identity', 'kmrcd_0.75_rbf']
+
 argument_parser = argparse.ArgumentParser(description='Summarize classical AD model results (see LXR_test.py)')
 argument_parser.add_argument('--dataset', type=str, default='Salinas', help='Select which dataset to load (default:Salinas).')
 argument_parser.add_argument('--recalculate', action='store_true', help='Recalculate metrics even if already present in Results_summary.xlsx')
@@ -18,7 +21,8 @@ argument_parser.set_defaults(recalculate=False)
 argument_parser.add_argument('--scaler', type=str, default='Standard', help='Scaler name (overrides experiment_settings Scaler)')
 argument_parser.add_argument('--scaling_scope', type=str, default='per_sample', choices=['global', 'per_sample', 'all'], help='Scaling scope for the Scaler (overrides experiment_settings Scaler scaling_scope)')
 argument_parser.add_argument('--subsample', type=str, default='random', help='Subsampling method (must match main.py)')
-argument_parser.add_argument('--subsample_amount', type=int, default=1000, help='Amount of data points sampled (must match main.py)')
+argument_parser.add_argument('--subsample_amount', type=int, default=10000, help='Amount of data points sampled (must match main.py)')
+argument_parser.add_argument('--models', type=str, nargs='+', default=MODEL_LIST, help='Background models to include, matched against the "{model_name}_{background_model}" result directory suffix (e.g. sample, ledoit_wolf, mrcd_auto_0.75_identity); default (None) includes every background model found')
 args = argument_parser.parse_args()
 
 local_filepath = pathlib.Path(__file__).parent.resolve()
@@ -28,6 +32,9 @@ base_filepath_results = os.path.join(base_filepath, 'Results')
 with open(os.path.join(base_filepath_configs, "result_processing_config.yaml"), "r") as f:
     experiment_settings = yaml.safe_load(f)
 metrics_to_calc = experiment_settings['metrics']
+# For per-target models (AMF/ACE) each metric is also computed per label (see compute_sample_metrics);
+# these companion columns hold the std across labels, per row, alongside the base mean-over-labels metric.
+metrics_to_calc_all = metrics_to_calc + [f"{m}_label_std" for m in metrics_to_calc]
 for arg in vars(args):
     experiment_settings[arg] = getattr(args, arg)
 if args.scaler is not None:
@@ -39,36 +46,68 @@ if args.subsample is not None:
     experiment_settings.setdefault('Subsample', {})['amount'] = args.subsample_amount
 
 
-def compute_sample_metrics(scores, label_array, anomaly_labels, category_ids, metrics_to_calc, desc):
+def _fill_nan_scores(score_row):
+    """Temporary fix for NaN values in scores, replace with mean of surrounding values."""
+    nan_indices = np.where(np.isnan(score_row))[0]
+    for index in nan_indices:
+        score_row[index] = np.nanmean(score_row[index-5:index+5])
+    return score_row
+
+
+def compute_sample_metrics(scores, label_array, anomaly_labels, category_ids, metrics_to_calc, desc, per_label_ids=None):
     """Score every sample against the true anomaly_labels (anomaly vs background, from label_array).
     Used for both the default 'Scores' map and the 'Scores_binary' map -- in both cases the
-    comparison is score-vs-ground-truth-label, never score-vs-score."""
-    L, H, W = scores.shape
+    comparison is score-vs-ground-truth-label, never score-vs-score.
+
+    For per-target models (AMF/ACE), `scores` is (L, num_labels, H, W) -- one score map per target
+    label, see main.py's Scores_per_label_ids -- and each label's own map is scored against that
+    label vs. everything else (label_row == label_id), and against its own top-0.5% pixels for the
+    percentage-correct table. The per-row metric is then the mean across labels, with the returned
+    label-std dict holding the std across labels (all NaN when scores is a single combined map,
+    e.g. RX or Scores_binary)."""
+    per_label = scores.ndim == 4
+    L = scores.shape[0]
     metric_per_sample = {m: np.zeros((L,), dtype=np.float32) for m in metrics_to_calc}
+    metric_per_sample_label_std = {m: np.full((L,), np.nan, dtype=np.float32) for m in metrics_to_calc}
     perc_correct_per_sample = np.full((L, len(category_ids)), np.nan, dtype=np.float32)
 
     for r in tqdm(range(L), total=L, desc=desc):
-        score_row = scores[r].reshape(-1).astype(np.float32)
         label_row = label_array[r].reshape(-1)
         anomaly_row = anomaly_labels[r].reshape(-1)
 
-        nan_indices = np.where(np.isnan(score_row))[0]
-        if len(nan_indices) > 0:
-            for index in nan_indices:
-                score_row[index] = np.nanmean(score_row[index-5:index+5])  # Temporary fix for NaN values in scores, replace with mean of surrounding values
+        if per_label:
+            label_scores = {label_id: _fill_nan_scores(scores[r, l].reshape(-1).astype(np.float32))
+                             for l, label_id in enumerate(per_label_ids) if label_id in category_ids}
 
-        for m in metrics_to_calc:
-            metric_per_sample[m][r] = calc_metric(anomaly_row, score_row, metric=m)
+            for m in metrics_to_calc:
+                per_label_values = [calc_metric((label_row == label_id).astype(anomaly_row.dtype), score_row, metric=m)
+                                     for label_id, score_row in label_scores.items()]
+                metric_per_sample[m][r] = np.mean(per_label_values)
+                metric_per_sample_label_std[m][r] = np.std(per_label_values)
 
-        threshold = np.percentile(score_row, 99.5)
-        predicted_anomaly = score_row >= threshold
-        for c, cat_id in enumerate(category_ids):
-            is_category = label_row == cat_id
-            count_true = np.count_nonzero(is_category)
-            count_pred = np.count_nonzero(is_category & predicted_anomaly)
-            perc_correct_per_sample[r, c] = count_pred/count_true if count_true > 0 else np.nan
+            for c, cat_id in enumerate(category_ids):
+                score_row = label_scores[cat_id]
+                threshold = np.percentile(score_row, 99.5)
+                predicted_anomaly = score_row >= threshold
+                is_category = label_row == cat_id
+                count_true = np.count_nonzero(is_category)
+                count_pred = np.count_nonzero(is_category & predicted_anomaly)
+                perc_correct_per_sample[r, c] = count_pred/count_true if count_true > 0 else np.nan
+        else:
+            score_row = _fill_nan_scores(scores[r].reshape(-1).astype(np.float32))
 
-    return metric_per_sample, perc_correct_per_sample
+            for m in metrics_to_calc:
+                metric_per_sample[m][r] = calc_metric(anomaly_row, score_row, metric=m)
+
+            threshold = np.percentile(score_row, 99.5)
+            predicted_anomaly = score_row >= threshold
+            for c, cat_id in enumerate(category_ids):
+                is_category = label_row == cat_id
+                count_true = np.count_nonzero(is_category)
+                count_pred = np.count_nonzero(is_category & predicted_anomaly)
+                perc_correct_per_sample[r, c] = count_pred/count_true if count_true > 0 else np.nan
+
+    return metric_per_sample, perc_correct_per_sample, metric_per_sample_label_std
 
 
 def compute_background_class_distribution(background_indices, label_array, experiment_configs, uses_kernel, category_ids, desc):
@@ -112,12 +151,13 @@ def compute_background_class_distribution(background_indices, label_array, exper
     return percentages_per_sample
 
 
-def summarize(metric_dict, perc_correct_dict, metrics_to_calc):
+def summarize(metric_dict, perc_correct_dict):
+    metric_keys = list(metric_dict.keys())
     metrics_summary = {}
     perc_summary = {}
-    for model in metric_dict[metrics_to_calc[0]]:
-        metrics = np.zeros((len(metrics_to_calc),), dtype=object)
-        for i, m in enumerate(metric_dict):
+    for model in metric_dict[metric_keys[0]]:
+        metrics = np.zeros((len(metric_keys),), dtype=object)
+        for i, m in enumerate(metric_keys):
             temp = metric_dict[m][model]
             if len(temp)==1:
                 metrics[i] = f"{np.nanmean(temp):.3f}"
@@ -142,8 +182,9 @@ perc_correct_dict_binary = {}
 bg_dist_dict = {}
 category_names = None
 all_category_names = None
-for m in metrics_to_calc:
+for m in metrics_to_calc_all:
     metric_dict[m] = {}
+for m in metrics_to_calc:
     metric_dict_binary[m] = {}
 
 # Models are discovered from the results directory itself (one subdirectory per
@@ -178,7 +219,7 @@ if not args.recalculate and os.path.exists(summary_path):
         existing_perc_summary_df = pd.read_excel(summary_path, sheet_name='Percentage correct', index_col=0)
         if os.path.exists(detailed_path):
             detailed_xls = pd.ExcelFile(detailed_path)
-            for m in metrics_to_calc:
+            for m in metrics_to_calc_all:
                 if m in detailed_xls.sheet_names:
                     existing_detailed_metric[m] = pd.read_excel(detailed_xls, sheet_name=m, index_col=0)
             for sheet_name in detailed_xls.sheet_names:
@@ -216,13 +257,13 @@ def has_cached_result(model_name):
         return False
     if model_name not in existing_metrics_df.index or model_name not in existing_perc_summary_df.index:
         return False
-    if not set(metrics_to_calc).issubset(existing_metrics_df.columns):
+    if not set(metrics_to_calc_all).issubset(existing_metrics_df.columns):
         return False
-    if existing_metrics_df.loc[model_name, metrics_to_calc].isna().any():
+    if existing_metrics_df.loc[model_name, metrics_to_calc_all].isna().any():
         return False
     if model_name not in existing_detailed_perc:
         return False
-    return all(model_name in existing_detailed_metric.get(m, pd.DataFrame()).index for m in metrics_to_calc)
+    return all(model_name in existing_detailed_metric.get(m, pd.DataFrame()).index for m in metrics_to_calc_all)
 
 def has_cached_result_binary(model_name):
     if existing_metrics_df_binary is None or existing_perc_summary_df_binary is None:
@@ -237,12 +278,26 @@ def has_cached_result_binary(model_name):
         return False
     return all(model_name in existing_detailed_metric_binary.get(m, pd.DataFrame()).index for m in metrics_to_calc)
 
+def select_models(available_models, requested_backgrounds):
+    # Result directories are named "{model_name}_{background_model}" (see create_save_dir_name),
+    # e.g. "base_rx_sample" or "base_amf_mrcd_auto_0.75_identity". requested_backgrounds selects
+    # by that background_model suffix, keeping every detector (rx/amf/ace, ...) that uses it.
+    if requested_backgrounds is None:
+        return available_models
+    selected = [m for m in available_models if any(m.endswith(f"_{bg}") for bg in requested_backgrounds)]
+    missing = [bg for bg in requested_backgrounds if not any(m.endswith(f"_{bg}") for m in available_models)]
+    if missing:
+        print(f"Warning: requested background models not found and will be skipped: {missing}")
+    return selected
+
+
 model_dirs = []
 if os.path.isdir(results_dir):
     for entry in sorted(os.listdir(results_dir)):
         entry_path = os.path.join(results_dir, entry)
         if os.path.isdir(entry_path) and os.path.exists(os.path.join(entry_path, "Raw_results.pickle")):
             model_dirs.append(entry)
+model_dirs = select_models(model_dirs, args.models)
 print(f"Found {len(model_dirs)} model result director{'y' if len(model_dirs) == 1 else 'ies'} under {results_dir}")
 
 models_found = 0
@@ -251,7 +306,7 @@ for model in model_dirs:
     cached_main = has_cached_result(model)
     if cached_main:
         print(f"Using cached results for model {model} (already present in {summary_filename})")
-        for m in metrics_to_calc:
+        for m in metrics_to_calc_all:
             metric_dict[m][model] = existing_detailed_metric[m].loc[model].values
         perc_correct_dict[model] = existing_detailed_perc[model].values
         if category_names is None:
@@ -277,7 +332,8 @@ for model in model_dirs:
         with open(pickle_path, "rb") as f:
             x = pickle.load(f)
         label_array = x["Labels"]  # (L, H, W) categorical class ids, 0 = background -- ground truth for both scores below
-        scores = x["Scores"]  # (L, H, W)
+        scores = x["Scores"]  # (L, H, W), or (L, num_labels, H, W) for per-target models (AMF/ACE)
+        scores_per_label_ids = x.get("Scores_per_label_ids")  # label id per channel of the 4D Scores array, only present for AMF/ACE
         scores_binary = x.get("Scores_binary")  # (L, H, W), only present for main.py results
         label_ids = x["Label_ids"]
         background_indices = x.get("Background_indices")  # per-row indices of the selected background (h-subset) pixels
@@ -303,10 +359,11 @@ for model in model_dirs:
             anomaly_labels = (label_array != 7).astype(np.int16) # Set water as the "normal class" for WHU-HI dataset
 
         if not cached_main:
-            metric_per_sample, perc_correct_per_sample = compute_sample_metrics(
-                scores, label_array, anomaly_labels, category_ids, metrics_to_calc, model)
+            metric_per_sample, perc_correct_per_sample, metric_per_sample_label_std = compute_sample_metrics(
+                scores, label_array, anomaly_labels, category_ids, metrics_to_calc, model, per_label_ids=scores_per_label_ids)
             for m in metrics_to_calc:
                 metric_dict[m][model] = metric_per_sample[m]
+                metric_dict[f"{m}_label_std"][model] = metric_per_sample_label_std[m]
             perc_correct_dict[model] = perc_correct_per_sample
             models_found += 1
 
@@ -320,14 +377,14 @@ for model in model_dirs:
             if scores_binary is None:
                 print(f"No binary scores found for model {model}; copying regular scores instead.")
                 if cached_main:
-                    metric_per_sample, perc_correct_per_sample = compute_sample_metrics(
-                        scores, label_array, anomaly_labels, category_ids, metrics_to_calc, model)
+                    metric_per_sample, perc_correct_per_sample, _ = compute_sample_metrics(
+                        scores, label_array, anomaly_labels, category_ids, metrics_to_calc, model, per_label_ids=scores_per_label_ids)
                 for m in metrics_to_calc:
                     metric_dict_binary[m][model] = metric_per_sample[m]
                 perc_correct_dict_binary[model] = perc_correct_per_sample
                 models_found_binary += 1
             else:
-                metric_per_sample_binary, perc_correct_per_sample_binary = compute_sample_metrics(
+                metric_per_sample_binary, perc_correct_per_sample_binary, _ = compute_sample_metrics(
                     scores_binary, label_array, anomaly_labels, category_ids, metrics_to_calc, f"{model} (binary)")
                 for m in metrics_to_calc:
                     metric_dict_binary[m][model] = metric_per_sample_binary[m]
@@ -344,7 +401,7 @@ print("Summarizing results")
 if models_found == 0:
     print('No results found. Skipping save step.')
 else:
-    metrics_summary, perc_summary = summarize(metric_dict, perc_correct_dict, metrics_to_calc)
+    metrics_summary, perc_summary = summarize(metric_dict, perc_correct_dict)
     save_dir = summary_save_dir
     print('Saving results to', save_dir)
     os.makedirs(save_dir, exist_ok=True)
@@ -363,7 +420,7 @@ else:
     #         perc_correct_df.to_excel(writer, sheet_name=f"PC {key}", index=True)
 
     with pd.ExcelWriter(summary_path, engine='xlsxwriter') as writer:
-        metric_df = pd.DataFrame.from_dict(metrics_summary, orient='index', columns=metrics_to_calc)
+        metric_df = pd.DataFrame.from_dict(metrics_summary, orient='index', columns=metrics_to_calc_all)
         metric_df.to_excel(writer, sheet_name='Metrics', index=True)
         perc_correct_df = pd.DataFrame.from_dict(perc_summary, orient='index', columns=category_names)
         perc_correct_df.to_excel(writer, sheet_name='Percentage correct', index=True)
@@ -383,7 +440,7 @@ else:
 if models_found_binary == 0:
     print('No binary results found. Skipping binary save step.')
 else:
-    metrics_summary_binary, perc_summary_binary = summarize(metric_dict_binary, perc_correct_dict_binary, metrics_to_calc)
+    metrics_summary_binary, perc_summary_binary = summarize(metric_dict_binary, perc_correct_dict_binary)
     save_dir = summary_save_dir
     print('Saving binary results to', save_dir)
     os.makedirs(save_dir, exist_ok=True)

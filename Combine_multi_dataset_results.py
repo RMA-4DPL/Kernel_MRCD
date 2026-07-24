@@ -130,13 +130,31 @@ def gather_dataset_summaries(datasets, summary_filename):
     return dataset_dirs, metrics_by_dataset, perc_by_dataset
 
 
-def write_combined_summary(metrics_by_dataset, perc_by_dataset, datasets_found, models, out_path):
+def format_cell(value, label_std_value):
+    # Append the per-label std (across AMF/ACE target labels, see Process_results.py's
+    # compute_sample_metrics) into the same cell as the base metric, instead of a separate sheet.
+    if value is None or label_std_value is None or 'nan' in str(label_std_value):
+        return value
+    return f"{value} \u00B1 {label_std_value}"
+
+
+def write_combined_summary(metrics_by_dataset, perc_by_dataset, datasets_found, models, metrics, out_path, include_label_std=False):
     with pd.ExcelWriter(out_path, engine='xlsxwriter') as writer:
-        for m in metrics_to_calc:
+        for m in metrics:
+            label_std_col = f"{m}_label_std"
             rows = {}
             for model in models:
-                rows[model] = [metrics_by_dataset[d].loc[model, m] if model in metrics_by_dataset[d].index else None
-                                for d in datasets_found]
+                values = []
+                for d in datasets_found:
+                    df = metrics_by_dataset[d]
+                    if model not in df.index or m not in df.columns:
+                        values.append(None)
+                        continue
+                    value = df.loc[model, m]
+                    if include_label_std and label_std_col in df.columns:
+                        value = format_cell(value, df.loc[model, label_std_col])
+                    values.append(value)
+                rows[model] = values
             pd.DataFrame.from_dict(rows, orient='index', columns=datasets_found).to_excel(writer, sheet_name=m, index=True)
         for dataset in datasets_found:
             perc_by_dataset[dataset].to_excel(writer, sheet_name=f"PC {dataset}"[:31], index=True)
@@ -179,8 +197,8 @@ datasets_found = list(metrics_by_dataset.keys())
 models = sorted(set().union(*(df.index for df in metrics_by_dataset.values())))
 models = select_models(models, args.models)
 
-write_combined_summary(metrics_by_dataset, perc_by_dataset, datasets_found, models,
-                        os.path.join(combined_save_dir, 'Combined_results_summary.xlsx'))
+write_combined_summary(metrics_by_dataset, perc_by_dataset, datasets_found, models, metrics_to_calc,
+                        os.path.join(combined_save_dir, 'Combined_results_summary.xlsx'), include_label_std=True)
 plot_combined_metrics(metrics_by_dataset, datasets_found, models, "",
                        os.path.join(combined_save_dir, "Combined_metrics_comparison.png"))
 
@@ -193,7 +211,7 @@ else:
     datasets_found_binary = list(metrics_by_dataset_binary.keys())
     models_binary = sorted(set().union(*(df.index for df in metrics_by_dataset_binary.values())))
     models_binary = select_models(models_binary, args.models)
-    write_combined_summary(metrics_by_dataset_binary, perc_by_dataset_binary, datasets_found_binary, models_binary,
+    write_combined_summary(metrics_by_dataset_binary, perc_by_dataset_binary, datasets_found_binary, models_binary, metrics_to_calc,
                             os.path.join(combined_save_dir, 'Combined_results_summary_binary.xlsx'))
     plot_combined_metrics(metrics_by_dataset_binary, datasets_found_binary, models_binary, " (binary)",
                            os.path.join(combined_save_dir, "Combined_metrics_comparison_binary.png"))
@@ -212,7 +230,10 @@ for dataset in datasets_found:
             continue
         with open(pickle_path, "rb") as f:
             x = pickle.load(f)
-        model_scores[model] = clip_and_normalize_data(x["Scores"][0])
+        model_score = x["Scores"]
+        if model_score.ndim == 4:  # (L, num_labels, H, W) for per-target models (AMF/ACE) -- combine for display
+            model_score = np.mean(model_score, axis=1)
+        model_scores[model] = clip_and_normalize_data(model_score[0])
         del x
 
     if not model_scores:
