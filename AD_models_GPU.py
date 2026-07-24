@@ -293,9 +293,11 @@ class AMF():
         self._cache_key = None
         self._k_tilde_cache = None
         self._cho_cache = None
+        self._kinv_kx_cache = None
         self._cache_key_gpu = None
         self._k_tilde_cache_gpu = None
         self._cho_cache_gpu = None
+        self._kinv_kx_cache_gpu = None
 
     def __call__(self, X, N, T):
         if self.kernel and self.gpu:
@@ -348,6 +350,7 @@ class AMF():
         if self.cov is None:
             self.cov = (1 - self.reg) * k_tilde + (N_t.shape[0] - 1) * self.reg * np.eye(N_t.shape[0]) # (8) in the paper
             self._cho_cache = None
+            self._kinv_kx_cache = None
         if self._cho_cache is None:
             self._cho_cache = _safe_cho_factor(self.cov, lower=True)
         c, low = self._cho_cache
@@ -357,9 +360,13 @@ class AMF():
         g_tt = (self.kernel.compute(t_t, t_t)[0, 0] - (1 - self.reg) * (k_t @ Kinv_kt)[0, 0]) / self.reg
 
         t_x = self.kernel.compute(t_t, x_t) # (1, n_test) raw direct kernel between target and each test pixel
-        k_x = self.kernel.compute(x_t, N_t)
-        Kinv_kx = cho_solve((c, low), k_x.T, check_finite=False)
-         # (n_test, n_bg) test-pixel-vs-background cross-kernel
+        if self._kinv_kx_cache is None:
+            # K_reg_inv @ k_x.T, (n_bg, n_test); depends only on the background
+            # and X, not T, so it is reused across the per-target call loop
+            # (T varies, X/N stay fixed) instead of being recomputed every call.
+            k_x = self.kernel.compute(x_t, N_t) # (n_test, n_bg) test-pixel-vs-background cross-kernel
+            self._kinv_kx_cache = cho_solve((c, low), k_x.T, check_finite=False)
+        Kinv_kx = self._kinv_kx_cache
         g_tx = (t_x - (1 - self.reg) * (k_t @ Kinv_kx)) / self.reg
 
         scores = g_tx ** 2 / g_tt
@@ -436,6 +443,7 @@ class AMF():
                 cov_t = (1 - self.reg) * k_tilde + (n_bg - 1) * self.reg * eye # (8) in the paper
                 self.cov = cov_t.cpu().numpy()
                 self._cho_cache_gpu = None
+                self._kinv_kx_cache_gpu = None
             else:
                 cov_t = torch.from_numpy(self.cov).to(self.device)
             if self._cho_cache_gpu is None:
@@ -447,9 +455,13 @@ class AMF():
             g_tt = (_rbf_kernel_torch(t_t, t_t, sigma)[0, 0] - (1 - self.reg) * (k_t @ Kinv_kt)[0, 0]) / self.reg
 
             t_x = _rbf_kernel_torch(t_t, x_t, sigma) # (1, n_test) raw direct kernel between target and each test pixel
-            k_x = _rbf_kernel_torch(x_t, N_t, sigma)
-            Kinv_kx = torch.cholesky_solve(k_x.T, L)
-            # (n_test, n_bg) test-pixel-vs-background cross-kernel
+            if self._kinv_kx_cache_gpu is None:
+                # K_reg_inv @ k_x.T, (n_bg, n_test); depends only on the background
+                # and X, not T, so it is reused across the per-target call loop
+                # (T varies, X/N stay fixed) instead of being recomputed every call.
+                k_x = _rbf_kernel_torch(x_t, N_t, sigma) # (n_test, n_bg) test-pixel-vs-background cross-kernel
+                self._kinv_kx_cache_gpu = torch.cholesky_solve(k_x.T, L)
+            Kinv_kx = self._kinv_kx_cache_gpu
             g_tx = (t_x - (1 - self.reg) * (k_t @ Kinv_kx)) / self.reg
 
             scores = g_tx ** 2 / g_tt
@@ -477,9 +489,11 @@ class AMF():
         self._cache_key = None
         self._k_tilde_cache = None
         self._cho_cache = None
+        self._kinv_kx_cache = None
         self._cache_key_gpu = None
         self._k_tilde_cache_gpu = None
         self._cho_cache_gpu = None
+        self._kinv_kx_cache_gpu = None
 
     def load_config(self, config_dict):
         if config_dict.get('kernel') is not None:
@@ -548,7 +562,9 @@ class AMF():
     def set_cov(self, cov=None):
         self.cov = cov
         self._cho_cache = None
+        self._kinv_kx_cache = None
         self._cho_cache_gpu = None
+        self._kinv_kx_cache_gpu = None
 
     def set_device(self, device=None):
         self.device = device
