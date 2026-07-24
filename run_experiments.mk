@@ -2,6 +2,8 @@
 # Variables
 PYTHON=python
 RETRAIN=#--retrain
+RECALCULATE_BACKGROUND=#--recalculate_background
+RECALCULATE_SCORES=#--recalculate_scores
 GPU=--gpu=3
 
 # All models defined in model_configs.yaml
@@ -18,13 +20,13 @@ MODELS = base_rx \
 SCALERS = Standard #none
 SCALING_SCOPES = per_sample
 BACKGROUND_CONFIGS = sample ledoit_wolf shrinkage_0.1 diagonal_0.1 mrcd_auto_0.75_equicorrelation kmrcd_0.75_rbf
-DATASETS = Salinas #HYDICE Salinas_A \
+DATASETS = CRI #Salinas #HYDICE Salinas_A \
            ABU_beach_3 ABU_airport_4 ABU_urban_3 ABU_beach_2 ABU_urban_1 \
            ABU_airport_1 ABU_airport_2 ABU_airport_3 ABU_urban_4 ABU_urban_5 ABU_urban_2 \
            ABU_beach_4 ABU_beach_1 \
-           Indiana PaviaU Salinas cooke_city SanDiego WHU-HI Pavia
+           Indiana CRI PaviaU Salinas cooke_city SanDiego WHU-HI Pavia
 SUBSAMPLES = random
-SUBSAMPLE_AMOUNTS = 20000 #400 1000
+SUBSAMPLE_AMOUNTS = 1000 400 100
 
 # Default target
 all: train
@@ -41,7 +43,7 @@ train:
 						for scope in $(SCALING_SCOPES); do \
 							for model in $(MODELS); do\
 								echo "=== model=$$model dataset=$$dataset scaler=$$scaler scaling_scope=$$scope subsample=$$subsample subsample_amount=$$amount --background_config=$$background_config ==="; \
-								$(PYTHON) main.py --model $$model $(GPU) $(RETRAIN) \
+								$(PYTHON) main.py --model $$model $(GPU) $(RETRAIN) $(RECALCULATE_BACKGROUND) $(RECALCULATE_SCORES) \
 									--scaling_scope=$$scope --scaler=$$scaler --dataset=$$dataset --background_config=$$background_config \
 									--subsample=$$subsample --subsample_amount=$$amount; \
 							done; \

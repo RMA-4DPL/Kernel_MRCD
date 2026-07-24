@@ -14,10 +14,10 @@ mcd_0.5:
 mcd_0.75:
   model_name: MCD
   support_fraction: 0.75
-mrcd_auto_0.5_identity:
+mrcd_auto_0.6_identity:
   model_name: MRCD
   rho: null
-  alpha: 0.75
+  alpha: 0.6
   h: null
   target: identity
   maxcond: 50.0
@@ -30,6 +30,14 @@ mrcd_auto_0.75_identity:
   target: identity
   maxcond: 50.0
   max_steps: 10
+mrcd_auto_0.9_identity:
+  model_name: MRCD
+  rho: null
+  alpha: 0.9
+  h: null
+  target: identity
+  maxcond: 50.0
+  max_steps: 10
 mrcd_auto_0.75_equicorrelation:
   model_name: MRCD
   rho: null
@@ -38,9 +46,9 @@ mrcd_auto_0.75_equicorrelation:
   target: equicorrelation
   maxcond: 50.0
   max_steps: 10
-kmrcd_0.5_rbf:
+kmrcd_0.6_rbf:
   model_name: KMRCD
-  alpha: 0.75
+  alpha: 0.6
   maxcond: 50.0
   max_steps: 10
   kernel: rbf

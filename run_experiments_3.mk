@@ -2,12 +2,14 @@
 # Variables
 PYTHON=python
 RETRAIN=#--retrain
+RECALCULATE_BACKGROUND=#--recalculate_background
+RECALCULATE_SCORES=--recalculate_scores
 GPU=--gpu=3
 
 # All models defined in model_configs.yaml
-MODELS = base_rx \
-         base_amf \
-		 base_ace
+MODELS = base_amf \
+		 base_ace \
+		 base_rx 
 
 # Sweep axes:
 #   subsample     -> none (no subsampling) or random (see subsampler.py), paired with subsample_amount
@@ -15,16 +17,15 @@ MODELS = base_rx \
 #   ac_model      -> atmospheric correction model (only IARR is implemented in Preproc.py)
 #   scaling_scope -> global or per_sample
 # (LXR_test.py has no train/test split, so no test_split_method axis here)
-SCALERS = Standard #none
+SCALERS = Standard
 SCALING_SCOPES = per_sample
-BACKGROUND_CONFIGS = sample ledoit_wolf shrinkage_0.1 diagonal_0.1 mrcd_auto_0.75_equicorrelation kmrcd_0.75_rbf
-DATASETS = Salinas #HYDICE Salinas_A \
+BACKGROUND_CONFIGS = mrcd_auto_0.75_identity #sample ledoit_wolf mrcd_auto_0.75_identity kmrcd_0.75_rbf # shrinkage_0.1 diagonal_0.1 
+DATASETS = Salinas WHU-HI Pavia PaviaU #HYDICE Indiana \
            ABU_beach_3 ABU_airport_4 ABU_urban_3 ABU_beach_2 ABU_urban_1 \
            ABU_airport_1 ABU_airport_2 ABU_airport_3 ABU_urban_4 ABU_urban_5 ABU_urban_2 \
-           ABU_beach_4 ABU_beach_1 \
-           Indiana PaviaU Salinas cooke_city SanDiego WHU-HI Pavia
+           ABU_beach_4 ABU_beach_1 CRI Pavia #Salinas_A PaviaU cooke_city SanDiego 
 SUBSAMPLES = random
-SUBSAMPLE_AMOUNTS = 10000 #400 1000
+SUBSAMPLE_AMOUNTS = 10000 #400 1000 100
 
 # Default target
 all: train
@@ -41,7 +42,7 @@ train:
 						for scope in $(SCALING_SCOPES); do \
 							for model in $(MODELS); do\
 								echo "=== model=$$model dataset=$$dataset scaler=$$scaler scaling_scope=$$scope subsample=$$subsample subsample_amount=$$amount --background_config=$$background_config ==="; \
-								$(PYTHON) main.py --model $$model $(GPU) $(RETRAIN) \
+								$(PYTHON) main.py --model $$model $(GPU) $(RETRAIN) $(RECALCULATE_BACKGROUND) $(RECALCULATE_SCORES) \
 									--scaling_scope=$$scope --scaler=$$scaler --dataset=$$dataset --background_config=$$background_config \
 									--subsample=$$subsample --subsample_amount=$$amount; \
 							done; \
