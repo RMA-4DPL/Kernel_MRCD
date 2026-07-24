@@ -1,11 +1,8 @@
 import numpy as np
-import scipy as sp
-from scipy.spatial.distance import cdist, pdist
+from scipy.spatial.distance import pdist
 from scipy.linalg import cho_factor, cho_solve
-import time
 import torch
 import torch.nn.functional as F
-import sys
 from kernels import RbfKernel, AutoRbfKernel
 
 def _safe_cho_factor(cov, lower=True):
@@ -70,17 +67,6 @@ class RX():
             return self.run_gpu(X, N)
         else:
             return self.run_cpu(X, N)
-
-    # def fit_kernel(self, N):
-    #     """
-    #     Fit the kernel background statistics (RBF Gram matrix of the
-    #     background samples, centered in feature space) used by run_kernel.
-    #     Cached so it is only recomputed when the background changes.
-    #     """
-    #     B = N.shape[-1]
-    #     N = np.ascontiguousarray(N.reshape(-1, B), dtype=np.float32)
-    #     self.gamma = self.gamma if self.gamma is not None else self._median_gamma(N)
-
 
     def run_kernel(self, X, N):
         """
@@ -233,7 +219,6 @@ class RX():
         x_t = torch.from_numpy(X).float().to(self.device)
         x_t = torch.reshape(x_t, (-1, B)).contiguous()
 
-        # anomaly_score = torch.from_numpy(np.empty(n, dtype=np.float32)).type(torch.float32).contiguous().to(device)
         with torch.no_grad():
             if self.cov is not None:
                 cov_t = torch.from_numpy(self.cov).float().to(self.device).contiguous()
@@ -242,13 +227,12 @@ class RX():
                 N_t = torch.from_numpy(N).float().to(self.device)
                 N_t = torch.reshape(N_t, (-1, B)).contiguous()
                 mean_N = torch.mean(N_t, dim=0, dtype=torch.float32).to(self.device)
-                N_t = N_t - mean_N[ None, :] # Overwrite N_t to save memory
+                N_t = N_t - mean_N[None, :] # Overwrite N_t to save memory
                 cov_t = N_t.transpose(0, 1) @ N_t
                 cov_t /= float(N_t.shape[0] - 1)
-            x_t = x_t - mean_N 
+            x_t = x_t - mean_N
             solved = torch.linalg.solve(cov_t, x_t.unsqueeze(-1)).squeeze(-1)
             return torch.reshape(torch.sum(x_t * solved, dim=1), (H, W)).detach().cpu().numpy()
-        # return torch.reshape(torch.sqrt(torch.sum(x_t * solved, dim=1)), (H, W, -1)).detach().cpu().numpy()
 
     def run_cpu(self, X, N):
         H, W, B = X.shape
@@ -512,16 +496,15 @@ class AMF():
         x_t = torch.reshape(x_t, (-1, B)).contiguous()
         t_t = torch.reshape(t_t, (-1, B)).contiguous()
 
-        # anomaly_score = torch.from_numpy(np.empty(n, dtype=np.float32)).type(torch.float32).contiguous().to(device)
         with torch.no_grad():
             if self.cov is not None:
                 cov_t = torch.from_numpy(self.cov).float().to(self.device).contiguous()
                 mean_N = torch.from_numpy(self.mean_N).float().to(self.device).contiguous()
             else:
                 N_t = torch.from_numpy(N).float().to(self.device)
-                N_t = torch.reshape(N, (-1, B)).contiguous()
-                mean_N = torch.mean(N_t, dim=1, dtype=torch.float32).to(self.device)
-                N_t = N_t - mean_N[:, None, :] # Overwrite N_t to save memory
+                N_t = torch.reshape(N_t, (-1, B)).contiguous()
+                mean_N = torch.mean(N_t, dim=0, dtype=torch.float32).to(self.device)
+                N_t = N_t - mean_N[None, :] # Overwrite N_t to save memory
                 cov_t = N_t.transpose(0, 1) @ N_t
                 cov_t /= float(N_t.shape[0] - 1)
             t_t = t_t - mean_N
@@ -810,16 +793,15 @@ class ACE():
         x_t = torch.reshape(x_t, (-1, B)).contiguous()
         t_t = torch.reshape(t_t, (-1, B)).contiguous()
 
-        # anomaly_score = torch.from_numpy(np.empty(n, dtype=np.float32)).type(torch.float32).contiguous().to(device)
         with torch.no_grad():
             if self.cov is not None:
                 cov_t = torch.from_numpy(self.cov).float().to(self.device).contiguous()
                 mean_N = torch.from_numpy(self.mean_N).float().to(self.device).contiguous()
             else:
                 N_t = torch.from_numpy(N).float().to(self.device)
-                N_t = torch.reshape(N, (-1, B)).contiguous()
-                mean_N = torch.mean(N_t, dim=1, dtype=torch.float32).to(self.device)
-                N_t = N_t - mean_N[:, None, :] # Overwrite N_t to save memory
+                N_t = torch.reshape(N_t, (-1, B)).contiguous()
+                mean_N = torch.mean(N_t, dim=0, dtype=torch.float32).to(self.device)
+                N_t = N_t - mean_N[None, :] # Overwrite N_t to save memory
                 cov_t = N_t.transpose(0, 1) @ N_t
                 cov_t /= float(N_t.shape[0] - 1)
             t_t = t_t - mean_N
