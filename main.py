@@ -144,12 +144,17 @@ if __name__ == "__main__":
             print(f"Loading {model} config")
             AD_model.load_config(config)
 
+        per_label_ids = [id for id in labels_ids if id != 0] if model != 'base_rx' else None
+        scores_shape = (L, len(per_label_ids), H, W) if per_label_ids is not None else (L, H, W)
         if cached_results is not None:
             scores = cached_results["Scores"]
+            if scores.shape != scores_shape:
+                print(f"Cached Scores shape {scores.shape} does not match expected {scores_shape} (old per-model combined format); recomputing scores from scratch.")
+                scores = np.zeros(scores_shape, dtype=np.float32)
             scores_binary = cached_results["Scores_binary"]
             times = cached_results.get("Logging", {}).get("Runtime", np.zeros((L,), dtype=np.float32))
         else:
-            scores = np.zeros((L, H, W), dtype=np.float32)
+            scores = np.zeros(scores_shape, dtype=np.float32)
             scores_binary = np.zeros((L, H, W), dtype=np.float32)
             times = np.zeros((L,), dtype=np.float32)
         if recalculate_scores_only:
@@ -233,7 +238,7 @@ if __name__ == "__main__":
                                     if flag_subsample:
                                         row_scores = row_scores.repeat(2, axis=0).repeat(2, axis=1)[:H, :W]
                                     temp_scores[i-1] = row_scores
-                            scores[r] = np.max(temp_scores, axis=0)
+                            scores[r] = temp_scores
                             target = np.mean(row[np.where(np.logical_or((label_full==0), (label_full==id_normal)))], axis=0)
                             row_scores = AD_model(row, bg, target)
                             if flag_subsample:
@@ -257,6 +262,7 @@ if __name__ == "__main__":
             save_dict = {"Labels": label_array,
                         "Label_ids": labels_ids,
                         "Scores": scores,
+                        "Scores_per_label_ids": per_label_ids,
                         "Scores_binary": scores_binary,
                         "Subsamples": subsamples_per_row,
                         "Background_pixels": background_pixels_per_row,
