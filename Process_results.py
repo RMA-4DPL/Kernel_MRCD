@@ -12,7 +12,7 @@ base_filepath_configs = pathlib.Path(__file__).parent.resolve()
 np.random.seed(4)
 
 #MODEL_LIST = ['sample', 'ledoit_wolf', 'mrcd_auto_0.75_identity', 'kmrcd_0.75_rbf']
-MODEL_LIST = ['mrcd_auto_0.75_identity', 'kmrcd_0.75_rbf']
+MODEL_LIST = ['sample', 'ledoit_wolf', 'mrcd_auto_0.75_identity', 'mrcd_auto_0.75_identity_maxcond500', 'mrcd_auto_0.75_identity_maxcond1000']
 
 argument_parser = argparse.ArgumentParser(description='Summarize classical AD model results (see LXR_test.py)')
 argument_parser.add_argument('--dataset', type=str, default='Salinas', help='Select which dataset to load (default:Salinas).')

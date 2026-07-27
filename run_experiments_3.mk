@@ -3,7 +3,7 @@
 PYTHON=python
 RETRAIN=#--retrain
 RECALCULATE_BACKGROUND=#--recalculate_background
-RECALCULATE_SCORES=--recalculate_scores
+RECALCULATE_SCORES=#--recalculate_scores
 GPU=--gpu=3
 
 # All models defined in model_configs.yaml
@@ -19,8 +19,8 @@ MODELS = base_amf \
 # (LXR_test.py has no train/test split, so no test_split_method axis here)
 SCALERS = Standard
 SCALING_SCOPES = per_sample
-BACKGROUND_CONFIGS = mrcd_auto_0.75_identity #sample ledoit_wolf mrcd_auto_0.75_identity kmrcd_0.75_rbf # shrinkage_0.1 diagonal_0.1 
-DATASETS = Salinas WHU-HI Pavia PaviaU #HYDICE Indiana \
+BACKGROUND_CONFIGS = mrcd_auto_0.75_identity_maxcond500 mrcd_auto_0.75_identity_maxcond1000 #sample ledoit_wolf mrcd_auto_0.75_identity kmrcd_0.75_rbf # shrinkage_0.1 diagonal_0.1 
+DATASETS = Salinas WHU-HI Pavia #PaviaU #HYDICE Indiana \
            ABU_beach_3 ABU_airport_4 ABU_urban_3 ABU_beach_2 ABU_urban_1 \
            ABU_airport_1 ABU_airport_2 ABU_airport_3 ABU_urban_4 ABU_urban_5 ABU_urban_2 \
            ABU_beach_4 ABU_beach_1 CRI Pavia #Salinas_A PaviaU cooke_city SanDiego 

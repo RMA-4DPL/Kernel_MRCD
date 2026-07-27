@@ -48,7 +48,7 @@ if __name__ == "__main__":
     argument_parser.add_argument('--scaler', type=str, default='Standard', help='Scaler name (overrides experiment_settings Scaler)')
     argument_parser.add_argument('--scaling_scope', type=str, default='per_sample', choices=['global', 'per_sample', 'all'], help='Scaling scope for the Scaler (overrides experiment_settings Scaler scaling_scope)')
     argument_parser.add_argument('--background_model', type=str, default='MCD', help='Model to select background sample for statistics (default: Sample).')
-    argument_parser.add_argument('--background_config', type=str, default='ledoit_wolf', help='Name of the entry in background_configs.yaml to load parameters from (overrides --background_model with its model_name).')
+    argument_parser.add_argument('--background_config', type=str, default='mrcd_auto_0.75_identity', help='Name of the entry in background_configs.yaml to load parameters from (overrides --background_model with its model_name).')
     argument_parser.add_argument('--gpu', type=int, default=3, help='GPU device number to use (default: 0)')
     argument_parser.add_argument('--subsample', type=str, default='random', help='method to use for data subsampling.')
     argument_parser.add_argument('--subsample_amount', type=int, default=10000, help='amount of data point to sample')
@@ -199,6 +199,8 @@ if __name__ == "__main__":
                     if experiment_settings['Subsample']['name'] != 'none':
                         sampler = get_subsampler(experiment_settings['Subsample']['name'])
                         bg_data = sampler(bg_data, experiment_settings['Subsample']['amount'])
+                    else:
+                        bg_data = bg_data.reshape((-1, bg_data.shape[-1]))
                     mean_N, cov = background_model(bg_data)
                     indices = getattr(background_model, 'support_indices', np.arange(bg_data.shape[0]))
                     bg = bg_data.reshape((-1, bg_data.shape[-1]))[indices]

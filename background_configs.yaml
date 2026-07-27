@@ -46,6 +46,38 @@ mrcd_auto_0.75_equicorrelation:
   target: equicorrelation
   maxcond: 50.0
   max_steps: 10
+mrcd_auto_0.75_identity_maxcond100:
+  model_name: MRCD
+  rho: null
+  alpha: 0.75
+  h: null
+  target: identity
+  maxcond: 100.0
+  max_steps: 10
+mrcd_auto_0.75_identity_maxcond200:
+  model_name: MRCD
+  rho: null
+  alpha: 0.75
+  h: null
+  target: identity
+  maxcond: 200.0
+  max_steps: 10
+mrcd_auto_0.75_identity_maxcond500:
+  model_name: MRCD
+  rho: null
+  alpha: 0.75
+  h: null
+  target: identity
+  maxcond: 500.0
+  max_steps: 10
+mrcd_auto_0.75_identity_maxcond1000:
+  model_name: MRCD
+  rho: null
+  alpha: 0.75
+  h: null
+  target: identity
+  maxcond: 1000.0
+  max_steps: 10
 kmrcd_0.6_rbf:
   model_name: KMRCD
   alpha: 0.6

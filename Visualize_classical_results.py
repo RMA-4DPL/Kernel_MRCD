@@ -4,6 +4,7 @@ import pathlib
 import argparse
 import yaml
 import numpy as np
+import scipy.linalg
 import pandas as pd
 import matplotlib.pyplot as plt
 from helper_functions import create_save_dir_name, load_dataset, normalize_data, clip_and_normalize_data
@@ -200,9 +201,12 @@ def build_scene_and_histograms(models, score_key, raw_visual, label_array, label
 
 
 def build_background_visualization(models, raw_visual, label_array, out_path):
-    """Per model: background mean spectrum, covariance heatmap, the stacked background
-    vectors themselves, and a spatial mask of the pixels selected as background
-    (Background_indices from main.py, row 0 -- scene is single-row)."""
+    """Per model: background mean spectrum, covariance heatmap, inverse covariance
+    (precision) heatmap, the stacked background vectors themselves, and a spatial mask
+    of the pixels selected as background (Background_indices from main.py, row 0 --
+    scene is single-row). The precision matrix is what the classical detectors (RX/AMF/
+    ACE) actually apply, so it is reconstructed here from the stored covariance via the
+    same pseudo-inverse used in Background_selection.py."""
     H, W = label_array[0].shape
     rows = []
     for model in models:
@@ -233,9 +237,9 @@ def build_background_visualization(models, raw_visual, label_array, out_path):
         print("No background mean/covariance found; skipping background visualization.")
         return
 
-    fig, axes = plt.subplots(len(rows), 4, figsize=(18, 4 * len(rows)), squeeze=False)
+    fig, axes = plt.subplots(len(rows), 4, figsize=(22, 4 * len(rows)), squeeze=False)
     for row_i, (model, mean, cov, background_vectors, indices, subsample_name) in enumerate(rows):
-        ax_mean, ax_cov, ax_vectors, ax_mask = axes[row_i]
+        ax_mean, ax_cov, ax_inv_cov, ax_vectors = axes[row_i]
 
         ax_mean.plot(mean)
         ax_mean.set_title(f"{model}: background mean")
@@ -247,27 +251,21 @@ def build_background_visualization(models, raw_visual, label_array, out_path):
         ax_cov.set_title(f"{model}: background covariance")
         fig.colorbar(im, ax=ax_cov, fraction=0.046, pad=0.04)
 
+        # Reconstruct the precision matrix the same way the detectors do (pinvh handles the
+        # possibly singular covariance). A percentile bound keeps the diagonal spikes typical
+        # of precision matrices from washing out the off-diagonal structure.
+        inv_cov = scipy.linalg.pinvh(cov)
+        inv_bound = np.percentile(np.abs(inv_cov), 99) or 1.0
+        im_inv = ax_inv_cov.imshow(inv_cov, cmap='coolwarm', vmin=-inv_bound, vmax=inv_bound)
+        ax_inv_cov.set_title(f"{model}: background inverse covariance")
+        fig.colorbar(im_inv, ax=ax_inv_cov, fraction=0.046, pad=0.04)
+
         im_vec = ax_vectors.imshow(np.clip(background_vectors, np.percentile(background_vectors, 0.05), np.percentile(background_vectors, 99.5)), aspect='auto', cmap='viridis')
         ax_vectors.set_title(f"{model}: background vectors ({background_vectors.shape[0]} x {background_vectors.shape[1]})")
         ax_vectors.set_xlabel("Band")
         ax_vectors.set_ylabel("Sample")
         fig.colorbar(im_vec, ax=ax_vectors, fraction=0.046, pad=0.04)
 
-        # Background_indices only index directly into the (H, W) grid when the background was
-        # drawn from the full, unsampled row -- see the "Subsample" branch in main.py.
-        if subsample_name == 'none' and indices.ndim == 1 and indices.size and indices.max() < H * W:
-            mask = np.zeros(H * W, dtype=bool)
-            mask[indices] = True
-            mask = mask.reshape(H, W)
-            ax_mask.imshow(raw_visual)
-            overlay = np.zeros((H, W, 4))
-            overlay[mask] = [1, 0, 0, 0.6]
-            ax_mask.imshow(overlay)
-            ax_mask.set_title(f"{model}: background pixels ({mask.sum()} / {H * W})")
-        else:
-            ax_mask.set_title(f"{model}: background pixel map unavailable\n(subsample={subsample_name})")
-        ax_mask.set_xticks([])
-        ax_mask.set_yticks([])
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
@@ -324,6 +322,11 @@ def build_per_label_detection_maps(models, label_array, label_ids, out_dir):
                 if col_i < len(per_label_ids):
                     label_id = per_label_ids[col_i]
                     ax.imshow(clip_and_normalize_data(scores_row[col_i]), cmap='viridis')
+                    # Outline this label's ground-truth pixels (red contour) on its detection map so
+                    # the detector's response stays visible while showing where that class actually is.
+                    class_mask = label_array[0] == label_id
+                    if np.any(class_mask):
+                        ax.contour(class_mask.astype(float), levels=[0.5], colors='red', linewidths=0.8)
                     if row_i == 0:
                         ax.set_title(label_ids[label_id][0], fontsize=8)
                 ax.set_xticks([])
